@@ -1,0 +1,13 @@
+{
+  "best_development_score": 0.1701,
+  "best_holdout_score": 0.1146,
+  "v4_holdout": 0.1397,
+  "improvement": -0.0251,
+  "best_model": "Hybrid Ensemble (Sparse Context Multi-Head + BiGRU Sequence Model + LightGBM GBDT)",
+  "best_ensemble_weights": {
+    "sparse": 0.8,
+    "neural_bigru": 0.15,
+    "lightgbm": 0.05
+  },
+  "best_decision_rule": "Conservative Zero-Class Thresholding (th0=0.40)"
+}
