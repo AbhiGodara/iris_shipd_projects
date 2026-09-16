@@ -1,0 +1,134 @@
+[    0.0s] loading data
+[    5.1s] pseudo-articles: sizes=[122, 93, 85, 84, 71, 69, 64, 62, 61, 58, 55, 54, 54, 50, 48, 48, 42, 36, 30, 14] must-link agreement=0.9942 on 342 pairs
+[    5.1s] building handcrafted features
+[   31.8s] features (35702, 99), positive rate 0.0606
+[   88.9s]     lgbm-handcrafted fold0 n=242 F1=0.6672 w=[1.0]
+[   90.5s]     lgbm-handcrafted fold1 n=234 F1=0.6581 w=[1.0]
+[   92.1s]     lgbm-handcrafted fold2 n=243 F1=0.6959 w=[1.0]
+[   93.6s]     lgbm-handcrafted fold3 n=238 F1=0.7477 w=[1.0]
+[   95.1s]     lgbm-handcrafted fold4 n=243 F1=0.6251 w=[1.0]
+[   95.1s]   [lgbm-handcrafted] mean=0.6788 std=0.0412 worst=0.6251
+[   97.1s] stage 1 submission written (0.6788)
+[   97.1s] computing frozen encoder features
+[  116.0s] SapBERT mention embeddings: (7296, 1536)
+[  133.8s] BiomedBERT contextual span features done
+[  268.0s]     lgbm-embeddings fold0 n=242 F1=0.7715 w=[1.0]
+[  272.9s]     lgbm-embeddings fold1 n=234 F1=0.7243 w=[1.0]
+[  277.8s]     lgbm-embeddings fold2 n=243 F1=0.7566 w=[1.0]
+[  282.6s]     lgbm-embeddings fold3 n=238 F1=0.7778 w=[1.0]
+[  287.5s]     lgbm-embeddings fold4 n=243 F1=0.7185 w=[1.0]
+[  287.5s]   [lgbm-embeddings] mean=0.7497 std=0.0242 worst=0.7185
+[  293.8s] stage 2 submission written (0.7497)
+[  293.8s] training span coref scorer: michiyasunaga/BioLinkBERT-base seeds=(42, 7)
+[  340.5s]       epoch 0 loss=0.3988
+[  382.2s]       epoch 1 loss=0.1524
+[  424.0s]       epoch 2 loss=0.0744
+[  464.0s]       epoch 3 loss=0.0452
+[  511.4s]       epoch 0 loss=0.3896
+[  552.7s]       epoch 1 loss=0.1522
+[  594.1s]       epoch 2 loss=0.0736
+[  635.6s]       epoch 3 loss=0.0462
+[  639.9s]     BioLinkBERT-base fold0 done (640s elapsed)
+[  682.7s]       epoch 0 loss=0.3963
+[  723.7s]       epoch 1 loss=0.1342
+[  764.6s]       epoch 2 loss=0.0722
+[  805.5s]       epoch 3 loss=0.0348
+[  852.5s]       epoch 0 loss=0.3999
+[  893.8s]       epoch 1 loss=0.1341
+[  935.0s]       epoch 2 loss=0.0631
+[  976.1s]       epoch 3 loss=0.0362
+[  980.5s]     BioLinkBERT-base fold1 done (980s elapsed)
+[ 1022.8s]       epoch 0 loss=0.4047
+[ 1063.8s]       epoch 1 loss=0.1494
+[ 1104.7s]       epoch 2 loss=0.0730
+[ 1146.0s]       epoch 3 loss=0.0434
+[ 1193.9s]       epoch 0 loss=0.4137
+[ 1235.3s]       epoch 1 loss=0.1437
+[ 1273.5s]       epoch 2 loss=0.0806
+[ 1308.8s]       epoch 3 loss=0.0497
+[ 1312.3s]     BioLinkBERT-base fold2 done (1312s elapsed)
+[ 1348.6s]       epoch 0 loss=0.3958
+[ 1390.8s]       epoch 1 loss=0.1416
+[ 1434.4s]       epoch 2 loss=0.0727
+[ 1473.3s]       epoch 3 loss=0.0435
+[ 1521.1s]       epoch 0 loss=0.4077
+[ 1564.5s]       epoch 1 loss=0.1471
+[ 1610.0s]       epoch 2 loss=0.0708
+[ 1655.3s]       epoch 3 loss=0.0443
+[ 1660.2s]     BioLinkBERT-base fold3 done (1660s elapsed)
+[ 1706.7s]       epoch 0 loss=0.3969
+[ 1750.7s]       epoch 1 loss=0.1336
+[ 1794.0s]       epoch 2 loss=0.0743
+[ 1838.4s]       epoch 3 loss=0.0361
+[ 1890.2s]       epoch 0 loss=0.3930
+[ 1935.5s]       epoch 1 loss=0.1399
+[ 1978.9s]       epoch 2 loss=0.0702
+[ 2023.5s]       epoch 3 loss=0.0380
+[ 2028.4s]     BioLinkBERT-base fold4 done (2028s elapsed)
+[ 2034.3s]     neural-BioLinkBERT-base fold0 n=242 F1=0.8670 w=[1.0]
+[ 2038.6s]     neural-BioLinkBERT-base fold1 n=234 F1=0.8116 w=[1.0]
+[ 2040.5s]     neural-BioLinkBERT-base fold2 n=243 F1=0.8509 w=[1.0]
+[ 2042.2s]     neural-BioLinkBERT-base fold3 n=238 F1=0.8610 w=[1.0]
+[ 2044.0s]     neural-BioLinkBERT-base fold4 n=243 F1=0.8059 w=[1.0]
+[ 2044.0s]   [neural-BioLinkBERT-base] mean=0.8393 std=0.0255 worst=0.8059
+[ 2046.3s] stage 3 submission written (0.8393)
+[ 2046.3s] training span coref scorer: microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext seeds=(42, 7)
+[ 2087.6s]       epoch 0 loss=0.4326
+[ 2122.5s]       epoch 1 loss=0.1795
+[ 2156.9s]       epoch 2 loss=0.0988
+[ 2191.3s]       epoch 3 loss=0.0614
+[ 2230.6s]       epoch 0 loss=0.4119
+[ 2265.7s]       epoch 1 loss=0.1762
+[ 2301.2s]       epoch 2 loss=0.0989
+[ 2336.9s]       epoch 3 loss=0.0663
+[ 2340.3s]     BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext fold0 done (2340s elapsed)
+[ 2376.6s]       epoch 0 loss=0.4315
+[ 2411.1s]       epoch 1 loss=0.1638
+[ 2445.5s]       epoch 2 loss=0.0856
+[ 2480.1s]       epoch 3 loss=0.0514
+[ 2521.3s]       epoch 0 loss=0.4245
+[ 2565.0s]       epoch 1 loss=0.1728
+[ 2611.1s]       epoch 2 loss=0.0887
+[ 2657.3s]       epoch 3 loss=0.0527
+[ 2662.0s]     BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext fold1 done (2662s elapsed)
+[ 2709.1s]       epoch 0 loss=0.4243
+[ 2753.3s]       epoch 1 loss=0.1698
+[ 2797.7s]       epoch 2 loss=0.0895
+[ 2842.7s]       epoch 3 loss=0.0533
+[ 2895.4s]       epoch 0 loss=0.4292
+[ 2940.0s]       epoch 1 loss=0.1584
+[ 2984.4s]       epoch 2 loss=0.0930
+[ 3029.8s]       epoch 3 loss=0.0568
+[ 3035.3s]     BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext fold2 done (3035s elapsed)
+[ 3088.0s]       epoch 0 loss=0.4268
+[ 3136.4s]       epoch 1 loss=0.1641
+[ 3182.4s]       epoch 2 loss=0.0926
+[ 3229.4s]       epoch 3 loss=0.0600
+[ 3284.2s]       epoch 0 loss=0.4310
+[ 3332.0s]       epoch 1 loss=0.1658
+[ 3379.4s]       epoch 2 loss=0.0901
+[ 3418.9s]       epoch 3 loss=0.0569
+[ 3422.4s]     BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext fold3 done (3422s elapsed)
+[ 3458.2s]       epoch 0 loss=0.4259
+[ 3492.3s]       epoch 1 loss=0.1677
+[ 3526.2s]       epoch 2 loss=0.0914
+[ 3560.4s]       epoch 3 loss=0.0531
+[ 3600.8s]       epoch 0 loss=0.4195
+[ 3634.6s]       epoch 1 loss=0.1682
+[ 3669.4s]       epoch 2 loss=0.0901
+[ 3704.4s]       epoch 3 loss=0.0569
+[ 3708.4s]     BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext fold4 done (3708s elapsed)
+[ 3710.7s]     neural-BiomedNLP-BiomedBE fold0 n=242 F1=0.8495 w=[1.0]
+[ 3712.5s]     neural-BiomedNLP-BiomedBE fold1 n=234 F1=0.7919 w=[1.0]
+[ 3714.6s]     neural-BiomedNLP-BiomedBE fold2 n=243 F1=0.8054 w=[1.0]
+[ 3716.4s]     neural-BiomedNLP-BiomedBE fold3 n=238 F1=0.8314 w=[1.0]
+[ 3718.7s]     neural-BiomedNLP-BiomedBE fold4 n=243 F1=0.7774 w=[1.0]
+[ 3718.7s]   [neural-BiomedNLP-BiomedBE] mean=0.8111 std=0.0262 worst=0.7774
+[ 3737.7s]     blend-lgbm+neural-BioLinkBERT-base+neural-BiomedNLP-BiomedBE fold0 n=242 F1=0.8749 w=[0.4, 0.6, -0.0]
+[ 3757.0s]     blend-lgbm+neural-BioLinkBERT-base+neural-BiomedNLP-BiomedBE fold1 n=234 F1=0.8232 w=[0.3, 0.5, 0.2]
+[ 3775.7s]     blend-lgbm+neural-BioLinkBERT-base+neural-BiomedNLP-BiomedBE fold2 n=243 F1=0.8683 w=[0.3, 0.5, 0.2]
+[ 3793.8s]     blend-lgbm+neural-BioLinkBERT-base+neural-BiomedNLP-BiomedBE fold3 n=238 F1=0.8824 w=[0.3, 0.6, 0.1]
+[ 3811.4s]     blend-lgbm+neural-BioLinkBERT-base+neural-BiomedNLP-BiomedBE fold4 n=243 F1=0.8092 w=[0.3, 0.5, 0.2]
+[ 3811.4s]   [blend-lgbm+neural-BioLinkBERT-base+neural-BiomedNLP-BiomedBE] mean=0.8516 std=0.0296 worst=0.8092
+[ 3836.8s] blend submission written (0.8516, weights [0.3, 0.6, 0.1])
+[ 3836.9s] DONE best=blend-lgbm+neural-BioLinkBERT-base+neural-BiomedNLP-BiomedBE mean=0.8516 std=0.0296 in 3837s

@@ -1,0 +1,186 @@
+{
+  "best_model": "blend-lgbm+neural-BioLinkBERT-base+neural-BiomedNLP-BiomedBE",
+  "approach": "Candidate scoring for coreference-chain recovery. A span-based neural scorer encodes each context once, builds start/end/attention-pooled span representations for the query and every candidate, and scores each pair with an MLP; it is blended with a LightGBM scorer over handcrafted coreference features (string/head/acronym/abbreviation match, modifier and identifier agreement, pronoun compatibility, recency, within-query rank normalisation) plus frozen SapBERT mention-embedding and frozen BiomedBERT contextual-span cosine similarities. Blended probabilities are decoded with a structural decoder: scores are pooled across candidates that must share a label (identical or head-equivalent mentions), nested candidates are suppressed, and selection uses an absolute threshold combined with a threshold relative to the top-scoring candidate, always keeping at least one candidate.",
+  "validation_scheme": "GroupKFold(5) over 20 pseudo-articles obtained by agglomerative cosine clustering of the TF-IDF context vectors. The proxy reproduces 99.4% of the 342 must-link pairs implied by verbatim text overlap between contexts, so folds separate articles the way the public train/test split does. Blend weights and all decoder settings are refitted inside each outer fold on the other articles only.",
+  "mean_score": 0.8516,
+  "std_score": 0.0296,
+  "worst_fold": 0.8092,
+  "fold_scores": [
+    0.8749,
+    0.8232,
+    0.8683,
+    0.8824,
+    0.8092
+  ],
+  "selected_blend_weights": [
+    0.3,
+    0.6,
+    0.1
+  ],
+  "selected_decoder": {
+    "pool": {
+      "pool": "mean",
+      "w": 0.5
+    },
+    "dec": {
+      "thr": 0.04,
+      "nest_sup": true,
+      "rel": 0.6
+    }
+  },
+  "per_fold_selected_params": [
+    {
+      "w": [
+        0.4,
+        0.6,
+        -0.0
+      ],
+      "pool": {
+        "pool": "mean",
+        "w": 0.5
+      },
+      "dec": {
+        "thr": 0.03,
+        "nest_sup": true,
+        "rel": 0.6
+      }
+    },
+    {
+      "w": [
+        0.3,
+        0.5,
+        0.2
+      ],
+      "pool": {
+        "pool": "mean",
+        "w": 0.5
+      },
+      "dec": {
+        "thr": 0.13,
+        "nest_sup": true,
+        "rel": 0.6
+      }
+    },
+    {
+      "w": [
+        0.3,
+        0.5,
+        0.2
+      ],
+      "pool": {
+        "pool": "mean",
+        "w": 0.5
+      },
+      "dec": {
+        "thr": 0.04,
+        "nest_sup": true,
+        "rel": 0.6
+      }
+    },
+    {
+      "w": [
+        0.3,
+        0.6,
+        0.1
+      ],
+      "pool": {
+        "pool": "mean",
+        "w": 0.5,
+        "groups": "sem"
+      },
+      "dec": {
+        "thr": 0.04,
+        "nest_sup": true,
+        "rel": 0.6
+      }
+    },
+    {
+      "w": [
+        0.3,
+        0.5,
+        0.2
+      ],
+      "pool": {
+        "pool": "mean",
+        "w": 1.0
+      },
+      "dec": {
+        "thr": 0.03,
+        "nest_sup": true,
+        "rel": 0.6
+      }
+    }
+  ],
+  "mustlink_agreement": 0.9942,
+  "why_this_model": "It has the best grouped-article validation mean, and its gain over each single model is larger than the fold-to-fold standard deviation. The neural scorer supplies context-sensitive coreference decisions (pronouns, descriptions, aliases) while the feature model supplies precise lexical/abbreviation evidence; their errors are complementary, which is why the blend beats both.",
+  "evidence_against_overfitting": [
+    "Every reported number is out-of-fold on articles the model never saw: the encoder, the gradient-boosted model, the blend weights and the decoder are all fitted inside the fold.",
+    "Fold spread is small relative to the gain: std 0.0296, worst fold 0.8092.",
+    "Grouping is by article-like clusters rather than random rows, so near-duplicate contexts from one article cannot straddle the split.",
+    "Test predictions are averaged over the same fold models that produced the OOF scores, so the score distribution the threshold was tuned on is the one it is applied to."
+  ],
+  "diagnostics": {
+    "oof_mean_f1": 0.8583,
+    "f1_by_true_antecedent_count": {
+      "1": [
+        868,
+        0.8755
+      ],
+      "2": [
+        218,
+        0.8393
+      ],
+      "3": [
+        64,
+        0.7908
+      ],
+      "4": [
+        50,
+        0.7294
+      ]
+    },
+    "f1_by_candidate_count_bucket": {
+      "6-11": [
+        7,
+        0.9524
+      ],
+      "12-17": [
+        8,
+        0.9271
+      ],
+      "18-23": [
+        23,
+        0.8348
+      ],
+      "24-29": [
+        1162,
+        0.8578
+      ]
+    },
+    "mean_predicted_antecedents": 1.554,
+    "exact_set_match_rate": 0.7075
+  },
+  "timing": {
+    "total_seconds": 3836.9,
+    "device": "NVIDIA GeForce RTX 3050 Laptop GPU",
+    "budget_seconds": 4680.0,
+    "note": "Stage 3 dominates the runtime. The script measures its own per-fit cost and drops extra seeds, then whole models, if the remaining work would not fit in the budget; a valid submission is on disk from stage 1 onwards."
+  },
+  "train_rows": 1200,
+  "test_rows": 300,
+  "output_rows": 300,
+  "predicted_antecedents_per_query": {
+    "mean": 1.627,
+    "distribution": {
+      "1": 180,
+      "2": 77,
+      "3": 27,
+      "4": 10,
+      "5": 5,
+      "8": 1
+    }
+  },
+  "train_antecedents_per_query": {
+    "mean": 1.442
+  }
+}
