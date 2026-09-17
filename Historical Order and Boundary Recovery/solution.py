@@ -1,22 +1,43 @@
 #!/usr/bin/env python3
 """
-EraMesh: Historical Order and Boundary Recovery
-Strong deterministic CPU/GPU-independent starter.
+EraMesh: Historical Order and Boundary Recovery.
 
 Usage:
   python3 solution.py <public_dir> <submission.csv>
   python3 solution.py <public_dir> <cv.json> --cv
 
-Core approach:
-  1) Parse row-local event/source cards.
-  2) Learn pairwise precedence from numeric structural features with LightGBM.
-  3) Learn complementary pairwise precedence from masked event/source text with TF-IDF + logistic regression.
-  4) Recover an unsupervised 1-D chronology from the unsigned distance mesh using classical MDS.
-  5) Fuse learned precedence + mesh chronology + genuine precedence cues.
-  6) Refine the global order with pairwise objective + mesh stress.
-  7) Learn same-era pair probabilities and decode exactly era_count contiguous segments by dynamic programming.
-  8) Validate the exact submission grammar before writing.
-All predictions use only public training data and test inputs.
+Approach
+--------
+The supplied `distance_mesh` is an unsigned, bucket-coarsened set of pairwise
+time distances.  Every bucket is an interval [lo, hi] on |t_a - t_b|, so a
+candidate chronological permutation is *consistent* with the mesh iff the
+induced system of difference constraints
+
+    x_{pi(j)} - x_{pi(i)} in [lo_ij, hi_ij]      (observed pairs)
+    x_{pi(i)} <= x_{pi(i+1)}                     (monotone positions)
+
+is satisfiable.  Feasibility of a difference-constraint system is exactly the
+absence of negative cycles, which is decided by a min-plus (Floyd-Warshall)
+closure in O(n^3); the total negative-diagonal mass is a smooth infeasibility
+measure suitable for local search.  `precedence_cues` are hard directed
+constraints (verified genuine on train) and additionally resolve the global
+reflection symmetry of an unsigned metric.
+
+  1) Per row, local search over permutations minimises mesh infeasibility plus
+     cue violations, collecting a diverse set of *feasible* candidate orders.
+  2) The mesh usually leaves several feasible orders.  A learned event-level
+     "chronological score" (LightGBM on structural features + Ridge on masked
+     text) ranks them; a temperature-weighted consensus over the candidate set
+     yields the order maximising expected pairwise concordance.
+  3) With the order fixed, the same min-plus closure yields tight lower/upper
+     bounds on the time gap of *every* pair (including unobserved ones).  Those
+     bounds drive a LightGBM same-era model and a LightGBM break-boundary model.
+  4) Dynamic programming decodes exactly `era_count` contiguous nonempty eras.
+  5) The exact official metric and the submission grammar are validated in-code.
+
+Only the supplied public train inputs/labels and public test inputs are used.
+All randomness is seeded per row, so sharding across processes does not change
+the output.
 """
 
 import os
@@ -25,7 +46,6 @@ import re
 import json
 import math
 import random
-import csv
 import hashlib
 from pathlib import Path
 from collections import defaultdict
@@ -33,285 +53,602 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
-from scipy.sparse.csgraph import shortest_path
-from numpy.linalg import eigh
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import GroupKFold, KFold
+from sklearn.linear_model import Ridge
+from sklearn.model_selection import GroupKFold
 
-
-# ------------------------------ deterministic config -------------------------
+# ----------------------------- deterministic config --------------------------
 
 SEED = 20260917
 LGB_THREADS = 6
 
-ORDER_PARAMS = dict(
-    objective="binary", learning_rate=0.04, num_leaves=31,
-    min_data_in_leaf=20, feature_fraction=0.9, bagging_fraction=0.9,
-    bagging_freq=1, lambda_l2=3.0, verbose=-1, num_threads=LGB_THREADS,
-    seed=42, deterministic=True, force_row_wise=True,
-)
-SAME_PARAMS = dict(
-    objective="binary", learning_rate=0.05, num_leaves=31,
-    min_data_in_leaf=20, feature_fraction=0.9, bagging_fraction=0.9,
-    bagging_freq=1, lambda_l2=3.0, verbose=-1, num_threads=LGB_THREADS,
-    seed=43, deterministic=True, force_row_wise=True,
-)
-ORDER_ROUNDS = 260
-SAME_ROUNDS = 230
-TEXT_C = 1.0
-TEXT_MAX_FEATURES = 20000
-W_NUMERIC = 0.60
-W_TEXT = 0.20
-W_MDS = 0.20
-MESH_STRESS_WEIGHT = 0.80
-MDS_SIGMOID_SCALE = 1.50
+# Bucket edges are published in metadata.json ("distance_cut_years").
+LO = np.array([0., 3., 10., 25., 60., 150., 300.])
+HI = np.array([3., 10., 25., 60., 150., 300., 1e7])      # feasibility (open top)
+HIC = np.array([3., 10., 25., 60., 150., 300., 900.])    # bounded, for features
+INF = 1e9
 
-GAP_REP = np.array([1.5, 6.5, 17.5, 42.5, 105.0, 225.0, 400.0], dtype=float)
+CUE_WEIGHT = 500.0          # cue violations dominate mesh infeasibility
+N_RESTART = 26              # local-search restarts per row
+WANT_CANDS = 20             # distinct feasible orders to collect
+PATIENCE = 8                # restarts without a new distinct solution
+CONSENSUS_TEMP = 1.0        # temperature for candidate-weighted consensus
+POINT_W = 0.60              # structural vs text chronological score
+BOUNDARY_W = 1.0            # weight of the break model inside the DP
 
-CATEGORIES = [
-    "colonization", "culture", "disaster", "economy", "founding",
-    "independence", "migration", "politics", "religion", "war",
-]
-DURS = ["d0", "d1", "d2", "d3"]
-TEMP_WORDS = {
-    "after", "before", "later", "earlier", "then", "following",
-    "subsequent", "previously", "first", "finally", "eventually",
-    "began", "begin", "ended", "end", "appointed", "elected",
-    "became", "invaded", "invasion", "war", "peace", "revolt",
-    "revolution", "died", "death", "born", "arrived", "departed",
-    "moved", "colony", "colonial", "reign", "ruled", "capital",
-    "occupied", "annexed", "merged", "seceded", "withdrew", "signed",
-}
+POINT_PARAMS = dict(objective="regression", learning_rate=0.05, num_leaves=31,
+                    min_data_in_leaf=25, feature_fraction=0.8, bagging_fraction=0.8,
+                    bagging_freq=1, lambda_l2=3.0, verbose=-1,
+                    num_threads=LGB_THREADS, seed=11, deterministic=True,
+                    force_row_wise=True)
+SAME_PARAMS = dict(objective="binary", learning_rate=0.05, num_leaves=31,
+                   min_data_in_leaf=40, feature_fraction=0.8, bagging_fraction=0.8,
+                   bagging_freq=1, lambda_l2=5.0, verbose=-1,
+                   num_threads=LGB_THREADS, seed=13, deterministic=True,
+                   force_row_wise=True)
+BND_PARAMS = dict(objective="binary", learning_rate=0.05, num_leaves=15,
+                  min_data_in_leaf=40, feature_fraction=0.8, bagging_fraction=0.8,
+                  bagging_freq=1, lambda_l2=5.0, verbose=-1,
+                  num_threads=LGB_THREADS, seed=17, deterministic=True,
+                  force_row_wise=True)
+POINT_ROUNDS = 300
+SAME_ROUNDS = 400
+BND_ROUNDS = 300
 
-EVENT_RE = re.compile(
-    r"(q\d+)\{cat=([^;]+);dur=([^;]+);src=([^;]*);title=(.*?);text=(.*)\}"
-)
+EVENT_RE = re.compile(r"(q\d+)\{cat=([^;]+);dur=([^;]+);src=([^;]*);title=(.*?);text=(.*)\}")
 SRC_RE = re.compile(r"(s\d+)\{kind=([^;]+);label=(.*)")
+CATS = ["colonization", "culture", "disaster", "economy", "founding",
+        "independence", "migration", "politics", "religion", "war"]
+DURS = ["d0", "d1", "d2", "d3"]
+KINDS = ["academic", "archive", "encyclopedia", "gov", "museum", "primary", "reference"]
+BANDS = ["easy", "medium", "hard"]
+NEW_ERA = ["colonization", "independence", "founding"]
 
-
-# ------------------------------ basic utilities -----------------------------
 
 def seed_everything(seed=SEED):
+    os.environ.setdefault("PYTHONHASHSEED", str(seed))
     random.seed(seed)
     np.random.seed(seed)
-    try:
-        import torch
-        torch.manual_seed(seed)
-        torch.set_num_threads(LGB_THREADS)
-        torch.use_deterministic_algorithms(True)
-    except Exception:
-        pass
 
 
-def sigmoid(x):
-    return 1.0 / (1.0 + np.exp(-np.clip(x, -30, 30)))
-
-
-def logit(p):
-    p = np.clip(np.asarray(p, dtype=float), 1e-5, 1 - 1e-5)
-    return np.log(p / (1 - p))
-
-
-def normalize_text(s):
-    s = str(s).lower()
-    s = re.sub(r"v\d+", " V_ALIAS ", s)
-    s = s.replace("<mask>", " MASK ").replace("<time>", " TIME ")
-    s = re.sub(r"q\d+", " Q_HANDLE ", s)
-    return re.findall(r"[a-z_]+|time|mask", s)
-
-
-def word_set(s):
-    return set(w.lower() for w in re.findall(r"[A-Za-z]+", str(s))
-               if w.lower() not in {"mask", "time"})
-
-
-# ------------------------------- parsing ------------------------------------
+# --------------------------------- parsing -----------------------------------
 
 def parse_row(row):
-    events = {}
+    ev = {}
     for part in str(row["event_cards"]).split(" || "):
         m = EVENT_RE.fullmatch(part.strip())
-        if not m:
-            continue
-        q, cat, dur, src, title, text = m.groups()
-        events[q] = {
-            "cat": cat,
-            "dur": dur,
-            "src": src.split(",") if src else [],
-            "title": title,
-            "text": text,
-        }
-
-    sources = {}
+        if m:
+            q, cat, dur, src, title, text = m.groups()
+            ev[q] = {"cat": cat, "dur": dur,
+                     "src": src.split(",") if src else [],
+                     "title": title, "text": text}
+    src = {}
     for part in str(row["source_ledger"]).split(" || "):
         m = SRC_RE.fullmatch(part.strip())
-        if not m:
-            continue
-        s, kind, label = m.groups()
-        sources[s] = {"kind": kind, "label": label}
-
-    cues = [x for x in str(row["precedence_cues"]).split() if "<" in x]
+        if m:
+            src[m.group(1)] = {"kind": m.group(2), "label": m.group(3)}
     mesh = {}
     for tok in str(row["distance_mesh"]).split():
         m = re.fullmatch(r"(q\d+)~(q\d+):g(\d+)", tok)
         if m:
             a, b, g = m.groups()
             mesh[tuple(sorted((a, b)))] = int(g)
+    cues = [tuple(x.split("<")) for x in str(row["precedence_cues"]).split() if "<" in x]
+    return ev, src, mesh, cues
 
-    program = str(row["chronicle_program"]).split() if "chronicle_program" in row else []
-    gold_order = [x for x in program if x != "BREAK"]
-    gold_segments = []
-    cur = []
-    for x in program:
+
+def gold_parts(prog):
+    toks = str(prog).split()
+    order = [x for x in toks if x != "BREAK"]
+    segs, cur = [], []
+    for x in toks:
         if x == "BREAK":
-            if cur:
-                gold_segments.append(cur)
+            segs.append(cur)
             cur = []
         else:
             cur.append(x)
-    if cur:
-        gold_segments.append(cur)
-
-    return events, sources, cues, mesh, gold_order, gold_segments
+    segs.append(cur)
+    return order, segs
 
 
-def pair_text(events, sources, a, b):
-    def build(q):
-        e = events[q]
-        src_kinds = [sources[s]["kind"] for s in e["src"] if s in sources]
-        toks = [e["cat"], e["dur"], *src_kinds, e["title"], e["text"]]
-        return normalize_text(" ".join(map(str, toks)))
-    ta, tb = build(a), build(b)
-    return (
-        " ".join("A_" + w for w in ta)
-        + " [PAIRSEP] "
-        + " ".join("B_" + w for w in tb)
-    )
+# ------------------- mesh feasibility / candidate generation ------------------
+
+class MeshRow(object):
+    """Difference-constraint view of one row's distance mesh."""
+
+    __slots__ = ("qs", "n", "qi", "mi", "mj", "mg", "lo", "hi", "cu", "base")
+
+    def __init__(self, qs, mesh, cues):
+        self.qs = qs
+        self.n = n = len(qs)
+        self.qi = qi = {q: i for i, q in enumerate(qs)}
+        items = sorted(mesh.items())
+        self.mi = np.array([qi[a] for (a, b), g in items], dtype=np.intp)
+        self.mj = np.array([qi[b] for (a, b), g in items], dtype=np.intp)
+        self.mg = np.array([g for (a, b), g in items], dtype=np.intp)
+        self.lo = LO[self.mg]
+        self.hi = HI[self.mg]
+        self.cu = np.array([[qi[a], qi[b]] for a, b in cues if a in qi and b in qi],
+                           dtype=np.intp).reshape(-1, 2)
+        B = np.full((n, n), INF)
+        np.fill_diagonal(B, 0.0)
+        if n > 1:
+            B[np.arange(1, n), np.arange(0, n - 1)] = 0.0
+        self.base = B
 
 
-# ---------------------------- numeric pair features -------------------------
-
-def lexical_features(ea, eb):
-    wa = word_set(ea["title"] + " " + ea["text"])
-    wb = word_set(eb["title"] + " " + eb["text"])
-    inter = len(wa & wb)
-    union = len(wa | wb)
-    ta = wa & TEMP_WORDS
-    tb = wb & TEMP_WORDS
-    return [
-        len(wa), len(wb), inter,
-        inter / max(1, union),
-        inter / max(1, min(len(wa), len(wb))),
-        len(ta), len(tb), len(ta & tb), len(wa ^ wb),
-    ]
-
-
-def pair_features(events, sources, cues, mesh, a, b):
-    ea, eb = events[a], events[b]
-
-    fa = [int(ea["cat"] == c) for c in CATEGORIES]
-    fb = [int(eb["cat"] == c) for c in CATEGORIES]
-    f = [*fa, *fb, int(ea["cat"] == eb["cat"])]
-
-    f += [int(ea["dur"] == d) for d in DURS]
-    f += [int(eb["dur"] == d) for d in DURS]
-    f += [
-        int(ea["dur"] == eb["dur"]),
-        DURS.index(ea["dur"]),
-        DURS.index(eb["dur"]),
-    ]
-
-    sa, sb = set(ea["src"]), set(eb["src"])
-    f += [
-        len(sa), len(sb), len(sa & sb), len(sa | sb),
-        len(sa & sb) / max(1, min(len(sa), len(sb))),
-    ]
-
-    ka = [sources[s]["kind"] for s in ea["src"] if s in sources]
-    kb = [sources[s]["kind"] for s in eb["src"] if s in sources]
-    f += [
-        len(set(ka) & set(kb)),
-        int(bool(set(ka) & set(kb))),
-        int("gov" in ka), int("gov" in kb),
-        int("academic" in ka), int("academic" in kb),
-        int("primary" in ka), int("primary" in kb),
-        int("archive" in ka), int("archive" in kb),
-        int("reference" in ka), int("reference" in kb),
-    ]
-
-    f += lexical_features(ea, eb)
-
-    cue_ab = int(f"{a}<{b}" in cues)
-    cue_ba = int(f"{b}<{a}" in cues)
-    f += [cue_ab, cue_ba]
-
-    g = mesh.get(tuple(sorted((a, b))), -1)
-    f += [
-        g, int(g >= 0), int(g == 0), int(g <= 1),
-        int(g >= 4), int(g >= 5), (g if g >= 0 else -1) / 6.0,
-    ]
-
-    ta = (ea["title"] + " " + ea["text"]).lower()
-    tb = (eb["title"] + " " + eb["text"]).lower()
-    early_words = ["before", "earlier", "previously", "first"]
-    late_words = ["after", "following", "later", "subsequent", "then"]
-    f += [
-        sum(ta.count(w) for w in early_words),
-        sum(ta.count(w) for w in late_words),
-        sum(tb.count(w) for w in early_words),
-        sum(tb.count(w) for w in late_words),
-    ]
-    return np.asarray(f, dtype=np.float32)
+def mesh_cost(R, perm):
+    """Negative-cycle mass of the induced system + weighted cue violations."""
+    n = R.n
+    pos = np.empty(n, dtype=np.intp)
+    pos[perm] = np.arange(n)
+    W = R.base.copy()
+    if len(R.mi):
+        pi, pj = pos[R.mi], pos[R.mj]
+        a = np.minimum(pi, pj)
+        b = np.maximum(pi, pj)
+        W[a, b] = R.hi
+        W[b, a] = -R.lo
+    for k in range(n):
+        W = np.minimum(W, W[:, k:k + 1] + W[k:k + 1, :])
+    d = np.diag(W)
+    c = float(-d[d < 0].sum())
+    if len(R.cu):
+        c += CUE_WEIGHT * float((pos[R.cu[:, 0]] > pos[R.cu[:, 1]]).sum())
+    return c
 
 
-def build_pair_dataset(df):
-    parsed = [parse_row(r) for _, r in df.iterrows()]
-    X, y_order, y_same = [], [], []
-    texts, row_pairs, row_slices = [], [], []
-    start = 0
-
-    for rid, (_, row) in enumerate(df.iterrows()):
-        events, sources, cues, mesh, gold_order, gold_segments = parsed[rid]
-        qlist = sorted(events)
-        pos = {q: i for i, q in enumerate(gold_order)}
-        seg_id = {q: si for si, seg in enumerate(gold_segments) for q in seg}
-
-        has_target = bool(gold_order)
-        pairs = []
-        for i in range(len(qlist)):
-            for j in range(i + 1, len(qlist)):
-                a, b = qlist[i], qlist[j]
-                pairs.append((a, b))
-                X.append(pair_features(events, sources, cues, mesh, a, b))
-                texts.append(pair_text(events, sources, a, b))
-                if has_target:
-                    y_order.append(int(pos[a] < pos[b]))
-                    y_same.append(int(seg_id[a] == seg_id[b]))
-
-        row_pairs.append(pairs)
-        row_slices.append((start, start + len(pairs)))
-        start += len(pairs)
-
-    return parsed, np.stack(X), np.asarray(y_order), np.asarray(y_same), texts, row_pairs, row_slices
+def local_opt(R, perm, maxpass=30):
+    perm = list(perm)
+    cur = mesh_cost(R, perm)
+    n = R.n
+    for _ in range(maxpass):
+        improved = False
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
+                cand = perm.copy()
+                cand.insert(j, cand.pop(i))
+                v = mesh_cost(R, cand)
+                if v < cur - 1e-9:
+                    perm, cur = cand, v
+                    improved = True
+                    if cur <= 1e-9:
+                        return perm, cur
+        if not improved:
+            break
+    return perm, cur
 
 
-# ----------------------- component proxy for validation ----------------------
+def gen_candidates(R, rng):
+    """Collect distinct permutations attaining the lowest infeasibility found."""
+    feas, seen, bestv, since = [], set(), 1e18, 0
+    for rs in range(N_RESTART):
+        if rs == 0:
+            p = list(range(R.n))
+        elif feas and rs % 2 == 1:
+            p = list(feas[int(rng.integers(len(feas)))])
+            for _ in range(int(rng.integers(2, 5))):
+                i, j = int(rng.integers(R.n)), int(rng.integers(R.n))
+                p.insert(j, p.pop(i))
+        else:
+            p = list(rng.permutation(R.n))
+        p, v = local_opt(R, p)
+        t = tuple(p)
+        if v < bestv - 1e-9:
+            bestv, feas, seen, since = v, [], set(), 0
+        if v <= bestv + 1e-9 and t not in seen:
+            seen.add(t)
+            feas.append(t)
+            since = 0
+        else:
+            since += 1
+        if len(feas) >= WANT_CANDS or (since >= PATIENCE and len(feas) >= 4):
+            break
+    return bestv, [list(p) for p in feas]
+
+
+def _cand_worker(args):
+    split_tag, rid, qs, mesh, cues = args
+    R = MeshRow(qs, mesh, cues)
+    rng = np.random.default_rng(1000003 * (3 if split_tag == "train" else 5)
+                                + 7919 * int(rid) + 13)
+    bestv, cands = gen_candidates(R, rng)
+    return rid, cands, bestv
+
+
+def build_candidates(df, split_tag, workers=None):
+    """Per-row RNG seeding keeps the result identical under any sharding."""
+    jobs = []
+    for _, row in df.iterrows():
+        ev, src, mesh, cues = parse_row(row)
+        jobs.append((split_tag, int(row["id"]), sorted(ev), mesh, cues))
+    out = {}
+    if workers is None:
+        workers = max(1, min(8, (os.cpu_count() or 1) - 1))
+    if workers > 1:
+        try:
+            import multiprocessing as mp
+            ctx = mp.get_context("spawn")
+            with ctx.Pool(workers, initializer=_init_worker) as pool:
+                for rid, cands, bestv in pool.imap_unordered(_cand_worker, jobs, chunksize=4):
+                    out[rid] = {"cands": cands, "bestv": bestv}
+        except Exception:
+            out = {}
+    if not out:
+        for job in jobs:
+            rid, cands, bestv = _cand_worker(job)
+            out[rid] = {"cands": cands, "bestv": bestv}
+    return {k: out[k] for k in sorted(out)}
+
+
+def _init_worker():
+    for v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        os.environ[v] = "1"
+
+
+def fw_bounds(order_idx, mi, mj, mg, n):
+    """Tightest bounds implied by the mesh once the permutation is fixed.
+
+    Returns W with W[i, j] = max attainable (x_j - x_i) in position space;
+    -W[j, i] is therefore the minimum attainable gap.
+    """
+    pos = np.empty(n, dtype=np.intp)
+    pos[np.asarray(order_idx, dtype=np.intp)] = np.arange(n)
+    W = np.full((n, n), INF)
+    np.fill_diagonal(W, 0.0)
+    if n > 1:
+        W[np.arange(1, n), np.arange(0, n - 1)] = 0.0
+    if len(mi):
+        pi, pj = pos[mi], pos[mj]
+        a = np.minimum(pi, pj)
+        b = np.maximum(pi, pj)
+        W[a, b] = HIC[mg]
+        W[b, a] = -LO[mg]
+    for k in range(n):
+        W = np.minimum(W, W[:, k:k + 1] + W[k:k + 1, :])
+    return W
+
+
+def gap_bounds(W):
+    """Min/max attainable gaps, clipped to a sane range.
+
+    On the rare row where no fully feasible permutation is found the closure can
+    emit negative or non-finite bounds; clipping keeps the downstream log1p
+    features well defined.  Feasible rows are unaffected.
+    """
+    # `lo` is a genuine implied lower bound and is deliberately NOT capped: long
+    # chronologies legitimately accumulate gaps far beyond any single bucket.
+    # Only `hi` is clipped, which matters solely on the rare row where no fully
+    # feasible permutation is found (there the closure can emit negative or
+    # non-finite upper bounds).  Feasible rows are bit-identical either way.
+    lo = np.nan_to_num(np.maximum(-W.T, 0.0), nan=0.0, posinf=0.0, neginf=0.0)
+    hi = np.nan_to_num(np.minimum(W, 900.0), nan=900.0, posinf=900.0, neginf=0.0)
+    return lo, np.clip(hi, 0.0, 900.0)
+
+
+# ------------------------------ row features ---------------------------------
+
+def ev_text(e, src):
+    kinds = " ".join("KIND_" + src[s]["kind"] for s in e["src"] if s in src)
+    labels = " ".join(src[s]["label"] for s in e["src"] if s in src)
+    t = (e["title"] + " " + e["text"] + " " + labels).lower()
+    t = re.sub(r"v\d+", " VAL ", t).replace("<mask>", " MSK ").replace("<time>", " TMK ")
+    return "CAT_" + e["cat"] + " DUR_" + e["dur"] + " " + kinds + " " + t
+
+
+def event_features(row, ev, src, mesh):
+    qs = sorted(ev)
+    n = len(qs)
+    qi = {q: i for i, q in enumerate(qs)}
+    G = np.full((n, n), -1.0)
+    for (a, b), g in mesh.items():
+        G[qi[a], qi[b]] = g
+        G[qi[b], qi[a]] = g
+    band = BANDS.index(row["visibility_band"])
+    ec = int(row["era_count"])
+    F = []
+    for q in qs:
+        e = ev[q]
+        i = qi[q]
+        obs = G[i][G[i] >= 0]
+        kinds = [src[s]["kind"] for s in e["src"] if s in src]
+        txt = e["title"] + " " + e["text"]
+        f = [CATS.index(e["cat"]) if e["cat"] in CATS else -1]
+        f += [int(e["cat"] == c) for c in CATS]
+        f += [DURS.index(e["dur"]) if e["dur"] in DURS else -1]
+        f += [int(e["dur"] == d) for d in DURS]
+        f += [len(e["src"])] + [int(k in kinds) for k in KINDS]
+        f += [len(txt.split()), txt.count("<mask>"), len(re.findall(r"v\d+", txt)),
+              txt.count("<time>"), len(e["title"].split()), e["title"].count("<mask>")]
+        f += [float(obs.mean()) if len(obs) else -1.0,
+              float(np.median(obs)) if len(obs) else -1.0,
+              float((obs >= 5).mean()) if len(obs) else -1.0,
+              float((obs <= 1).mean()) if len(obs) else -1.0,
+              float((obs >= 3).mean()) if len(obs) else -1.0,
+              len(obs) / max(1, n - 1),
+              float(obs.max()) if len(obs) else -1.0,
+              float(obs.min()) if len(obs) else -1.0]
+        f += [n, ec, band]
+        F.append(f)
+    return qs, np.asarray(F, dtype=np.float32)
+
+
+def prepare_rows(df, cand_map, with_gold):
+    rows = []
+    for _, r in df.iterrows():
+        ev, src, mesh, cues = parse_row(r)
+        qs, F = event_features(r, ev, src, mesh)
+        qi = {q: i for i, q in enumerate(qs)}
+        items = sorted(mesh.items())
+        R = dict(id=int(r["id"]), band=r["visibility_band"], ec=int(r["era_count"]),
+                 n=len(qs), qs=qs, ev=ev, src=src, F=F,
+                 texts=[ev_text(ev[q], src) for q in qs],
+                 mi=np.array([qi[a] for (a, b), g in items], dtype=np.intp),
+                 mj=np.array([qi[b] for (a, b), g in items], dtype=np.intp),
+                 mg=np.array([g for (a, b), g in items], dtype=np.intp),
+                 cands=cand_map[int(r["id"])]["cands"])
+        if not R["cands"]:
+            R["cands"] = [list(range(len(qs)))]
+        if with_gold:
+            go, gsegs = gold_parts(r["chronicle_program"])
+            R["go"], R["gsegs"] = go, gsegs
+        rows.append(R)
+    return rows
+
+
+# ------------------------- candidate ranking / consensus ----------------------
+
+def pointwise_targets(R):
+    pos = {q: i for i, q in enumerate(R["go"])}
+    n = R["n"]
+    return np.array([pos[q] / max(1, n - 1) for q in R["qs"]], dtype=np.float32)
+
+
+def pick_order(R, escore, temp=CONSENSUS_TEMP):
+    n = R["n"]
+    w = 2.0 * np.arange(n) - (n - 1)
+    s = np.array([float(np.dot(escore[np.asarray(c)], w)) for c in R["cands"]])
+    best = list(R["cands"][int(np.argmax(s))])
+    if temp <= 0 or len(R["cands"]) == 1:
+        return best
+    wt = np.exp((s - s.max()) / temp)
+    wt /= wt.sum()
+    M = np.zeros((n, n))
+    for wk, c in zip(wt, R["cands"]):
+        pos = np.empty(n, dtype=np.intp)
+        pos[np.asarray(c)] = np.arange(n)
+        M += wk * (pos[:, None] < pos[None, :])
+    S = M - M.T
+    iu = np.triu_indices(n, 1)
+
+    def obj(p):
+        idx = np.asarray(p)
+        return float(S[np.ix_(idx, idx)][iu].sum())
+
+    cur = obj(best)
+    for _ in range(12):
+        improved = False
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
+                c2 = best.copy()
+                c2.insert(j, c2.pop(i))
+                v = obj(c2)
+                if v > cur + 1e-12:
+                    best, cur = c2, v
+                    improved = True
+        if not improved:
+            break
+    return best
+
+
+# -------------------------- era pair / boundary features ----------------------
+
+def _row_context(R, order):
+    n = R["n"]
+    lo, hi = gap_bounds(fw_bounds(order, R["mi"], R["mj"], R["mg"], n))
+    qs = R["qs"]
+    cats = [R["ev"][qs[k]]["cat"] for k in order]
+    srcs = [set(R["ev"][qs[k]]["src"]) for k in order]
+    kinds = [set(R["src"][s]["kind"] for s in R["ev"][qs[k]]["src"] if s in R["src"])
+             for k in order]
+    pos = np.empty(n, dtype=np.intp)
+    pos[np.asarray(order)] = np.arange(n)
+    mg = np.full((n, n), -1.0)
+    for k in range(len(R["mi"])):
+        a, b = pos[R["mi"][k]], pos[R["mj"][k]]
+        mg[a, b] = mg[b, a] = R["mg"][k]
+    return lo, hi, cats, srcs, kinds, mg
+
+
+def seg_features(R, order):
+    n = R["n"]
+    lo, hi, cats, srcs, kinds, mesh_g = _row_context(R, order)
+    step_lo = np.array([lo[i, i + 1] for i in range(n - 1)] + [0.0])
+    cum_lo = np.concatenate([[0.0], np.cumsum(step_lo[:n - 1])])
+    newera = np.array([1.0 if c in NEW_ERA else 0.0 for c in cats])
+    cn_new = np.concatenate([[0.0], np.cumsum(newera)])
+    band = BANDS.index(R["band"])
+    feats, idx = [], []
+    for i in range(n):
+        for j in range(i + 1, n):
+            d = j - i
+            seg_lo, seg_hi = lo[i, j], hi[i, j]
+            inner = step_lo[i:j]
+            feats.append([
+                d, d / (n - 1), i / (n - 1), j / (n - 1), n, R["ec"], band,
+                np.log1p(seg_lo), np.log1p(seg_hi), np.log1p(0.5 * (seg_lo + seg_hi)),
+                mesh_g[i, j], int(mesh_g[i, j] >= 0),
+                float(inner.max()) if len(inner) else 0.0,
+                np.log1p(float(inner.max()) if len(inner) else 0.0),
+                float(inner.sum()),
+                float(np.sort(inner)[-2]) if len(inner) > 1 else 0.0,
+                cum_lo[j] - cum_lo[i],
+                cn_new[j] - cn_new[i + 1] if j > i + 1 else 0.0,
+                cn_new[j + 1] - cn_new[i + 1],
+                int(cats[i] == cats[j]),
+                CATS.index(cats[i]) if cats[i] in CATS else -1,
+                CATS.index(cats[j]) if cats[j] in CATS else -1,
+                int(cats[j] in NEW_ERA), int(cats[i] in NEW_ERA),
+                len(srcs[i] & srcs[j]), len(srcs[i] | srcs[j]),
+                len(srcs[i] & srcs[j]) / max(1, min(len(srcs[i]), len(srcs[j]))),
+                len(kinds[i] & kinds[j]),
+                (n - 1) / max(1, R["ec"]),
+                seg_lo / max(1.0, cum_lo[n - 1]),
+            ])
+            idx.append((i, j))
+    return np.asarray(feats, dtype=np.float32), idx
+
+
+def bnd_features(R, order):
+    n = R["n"]
+    lo, hi, cats, srcs, kinds, mg = _row_context(R, order)
+    step = np.array([lo[i, i + 1] for i in range(n - 1)])
+    steph = np.array([hi[i, i + 1] for i in range(n - 1)])
+    mx = max(1.0, float(step.max()) if len(step) else 1.0)
+    rk = np.argsort(np.argsort(-step, kind="mergesort")) if len(step) else np.zeros(0)
+    band = BANDS.index(R["band"])
+    F = []
+    for i in range(n - 1):
+        F.append([i, i / (n - 2) if n > 2 else 0.5, n, R["ec"], band,
+                  (R["ec"] - 1) / (n - 1),
+                  step[i], np.log1p(step[i]), steph[i], np.log1p(steph[i]),
+                  step[i] / mx, rk[i], rk[i] / max(1, n - 2), int(rk[i] < R["ec"] - 1),
+                  mg[i, i + 1], int(mg[i, i + 1] >= 0),
+                  CATS.index(cats[i]) if cats[i] in CATS else -1,
+                  CATS.index(cats[i + 1]) if cats[i + 1] in CATS else -1,
+                  int(cats[i] == cats[i + 1]), int(cats[i + 1] in NEW_ERA),
+                  int(cats[i] in NEW_ERA),
+                  len(srcs[i] & srcs[i + 1]), len(kinds[i] & kinds[i + 1]),
+                  float(np.log1p(lo[0, i + 1])), float(np.log1p(lo[i + 1, n - 1]))])
+    return np.asarray(F, dtype=np.float32)
+
+
+def seg_targets(R, order):
+    qs = R["qs"]
+    gs = {q: k for k, s in enumerate(R["gsegs"]) for q in s}
+    n = R["n"]
+    return np.asarray([int(gs[qs[order[i]]] == gs[qs[order[j]]])
+                       for i in range(n) for j in range(i + 1, n)], dtype=np.float32)
+
+
+def bnd_targets(R, order):
+    qs = R["qs"]
+    gs = {q: k for k, s in enumerate(R["gsegs"]) for q in s}
+    n = R["n"]
+    return np.asarray([int(gs[qs[order[i]]] != gs[qs[order[i + 1]]])
+                       for i in range(n - 1)], dtype=np.float32)
+
+
+# ------------------------------ segmentation DP -------------------------------
+
+def dp_segments(n, delta, bound_lp, K):
+    """Split positions 0..n-1 into exactly K contiguous nonempty eras."""
+    cum = np.zeros((n, n + 1))
+    for l in range(n):
+        c = 0.0
+        for r in range(l + 1, n + 1):
+            j = r - 1
+            if j > l:
+                c += delta[l:j, j].sum()
+            cum[l, r] = c
+    K = max(1, min(int(K), n))
+    NEG = -1e18
+    dp = np.full((K + 1, n + 1), NEG)
+    prev = np.full((K + 1, n + 1), -1, dtype=int)
+    dp[0, 0] = 0.0
+    for k in range(1, K + 1):
+        for r in range(k, n + 1):
+            best, bl = NEG, -1
+            for l in range(k - 1, r):
+                v = dp[k - 1, l] + cum[l, r]
+                if l > 0:
+                    v += bound_lp[l - 1]
+                if v > best:
+                    best, bl = v, l
+            dp[k, r] = best
+            prev[k, r] = bl
+    bounds, r = [], n
+    for k in range(K, 0, -1):
+        l = int(prev[k, r])
+        bounds.append((l, r))
+        r = l
+    bounds.reverse()
+    return bounds
+
+
+# ------------------------------ official metric -------------------------------
+
+def score_row(pred_order, pred_segs, gold_order, gold_segs):
+    """Exact metric: 0.50 * nonneg Kendall + 0.40 * nonneg pair MCC + 0.10 * adj F1."""
+    n = len(gold_order)
+    posp = {q: i for i, q in enumerate(pred_order)}
+    if n <= 1:
+        O = 1.0
+    else:
+        agree = 0
+        tot = n * (n - 1) // 2
+        for i in range(n):
+            for j in range(i + 1, n):
+                agree += int(posp[gold_order[i]] < posp[gold_order[j]])
+        O = max(0.0, 2.0 * agree / tot - 1.0)
+
+    gs = {q: k for k, s in enumerate(gold_segs) for q in s}
+    ps = {q: k for k, s in enumerate(pred_segs) for q in s}
+    tp = tn = fp = fn = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = gold_order[i], gold_order[j]
+            sg, sp = gs[a] == gs[b], ps[a] == ps[b]
+            if sg and sp:
+                tp += 1
+            elif (not sg) and (not sp):
+                tn += 1
+            elif sp:
+                fp += 1
+            else:
+                fn += 1
+    den = math.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    M = max(0.0, (tp * tn - fp * fn) / den) if den > 0 else 0.0
+
+    def edges(segs):
+        ed = set()
+        if not segs or not segs[0]:
+            return ed
+        ed.add(("START", segs[0][0], "START"))
+        for s in segs:
+            for a, b in zip(s, s[1:]):
+                ed.add((a, b, "WITHIN"))
+        for s1, s2 in zip(segs[:-1], segs[1:]):
+            ed.add((s1[-1], s2[0], "BREAK"))
+        ed.add((segs[-1][-1], "END", "END"))
+        return ed
+
+    eg, ep = edges(gold_segs), edges(pred_segs)
+    A = 2.0 * len(eg & ep) / max(1, len(eg) + len(ep))
+    return 0.50 * O + 0.40 * M + 0.10 * A, O, M, A
+
+
+# --------------------- solver-visible component proxy groups ------------------
 
 def row_shingles(row):
-    text = (str(row["event_cards"]) + " " + str(row["source_ledger"])).lower()
-    text = re.sub(r"q\d+", "Q", text)
-    text = re.sub(r"v\d+", "V", text)
-    text = text.replace("<mask>", "MASK").replace("<time>", "TIME")
-    toks = re.findall(r"[a-z]+|mask|time|d[0-3]|q|v", text)
+    t = (str(row["event_cards"]) + " " + str(row["source_ledger"])).lower()
+    t = re.sub(r"q\d+", "Q", t)
+    t = re.sub(r"v\d+", "V", t)
+    t = t.replace("<mask>", "MASK").replace("<time>", "TIME")
+    toks = re.findall(r"[a-z]+|mask|time|d[0-3]|q|v", t)
     if len(toks) < 5:
         return set()
     return set(zip(*(toks[i:] for i in range(5))))
 
 
-def make_component_groups(df, threshold=0.45):
+def make_groups(df, threshold=0.45):
     sh = [row_shingles(r) for _, r in df.iterrows()]
-    parent = list(range(len(sh)))
+    n = len(sh)
+    parent = list(range(n))
 
     def find(x):
         while parent[x] != x:
@@ -319,485 +656,199 @@ def make_component_groups(df, threshold=0.45):
             x = parent[x]
         return x
 
-    def union(a, b):
-        a, b = find(a), find(b)
-        if a != b:
-            parent[b] = a
-
-    for i in range(len(sh)):
-        for j in range(i + 1, len(sh)):
-            jac = len(sh[i] & sh[j]) / max(1, len(sh[i] | sh[j]))
-            if jac >= threshold:
-                union(i, j)
-
-    roots = {}
-    groups = np.empty(len(sh), dtype=int)
-    for i in range(len(sh)):
+    for i in range(n):
+        for j in range(i + 1, n):
+            if len(sh[i] & sh[j]) / max(1, len(sh[i] | sh[j])) >= threshold:
+                a, b = find(i), find(j)
+                if a != b:
+                    parent[b] = a
+    roots, g = {}, np.empty(n, dtype=int)
+    for i in range(n):
         r = find(i)
         if r not in roots:
             roots[r] = len(roots)
-        groups[i] = roots[r]
-    return groups
+        g[i] = roots[r]
+    return g
 
 
-# ----------------------------- mesh chronology ------------------------------
+# --------------------------------- models -------------------------------------
 
-def mesh_mds(events, cues, mesh):
-    qlist = sorted(events)
-    n = len(qlist)
-    qidx = {q: i for i, q in enumerate(qlist)}
+class EraMeshModel(object):
+    def fit(self, rows):
+        Xp = np.vstack([R["F"] for R in rows])
+        yp = np.concatenate([pointwise_targets(R) for R in rows])
+        self.m_point = lgb.train(POINT_PARAMS, lgb.Dataset(Xp, label=yp),
+                                 num_boost_round=POINT_ROUNDS)
+        self.vec = TfidfVectorizer(ngram_range=(1, 2), min_df=3,
+                                   max_features=40000, sublinear_tf=True)
+        Xt = self.vec.fit_transform([t for R in rows for t in R["texts"]])
+        self.m_text = Ridge(alpha=2.0, random_state=SEED)
+        self.m_text.fit(Xt, yp)
 
-    D = np.full((n, n), np.inf, dtype=float)
-    np.fill_diagonal(D, 0.0)
-    for (a, b), g in mesh.items():
-        d = GAP_REP[g]
-        D[qidx[a], qidx[b]] = d
-        D[qidx[b], qidx[a]] = d
+        orders = self.predict_orders(rows)
+        Xs = np.vstack([seg_features(R, o)[0] for R, o in zip(rows, orders)])
+        ys = np.concatenate([seg_targets(R, o) for R, o in zip(rows, orders)])
+        self.m_same = lgb.train(SAME_PARAMS, lgb.Dataset(Xs, label=ys),
+                                num_boost_round=SAME_ROUNDS)
+        Xb = np.vstack([bnd_features(R, o) for R, o in zip(rows, orders)])
+        yb = np.concatenate([bnd_targets(R, o) for R, o in zip(rows, orders)])
+        self.m_bnd = lgb.train(BND_PARAMS, lgb.Dataset(Xb, label=yb),
+                               num_boost_round=BND_ROUNDS)
+        return self
 
-    SP = shortest_path(D, directed=False, unweighted=False)
-    finite = SP[np.isfinite(SP)]
-    fill = float(np.max(finite)) if len(finite) else 1.0
-    SP[~np.isfinite(SP)] = fill * 1.5
+    def event_scores(self, rows):
+        Xa = np.vstack([R["F"] for R in rows])
+        pa = self.m_point.predict(Xa)
+        ta = self.m_text.predict(self.vec.transform([t for R in rows for t in R["texts"]]))
+        out, c = [], 0
+        for R in rows:
+            n = R["n"]
+            out.append(POINT_W * pa[c:c + n] + (1.0 - POINT_W) * ta[c:c + n])
+            c += n
+        return out
 
-    J = np.eye(n) - np.ones((n, n)) / n
-    B = -0.5 * J @ (SP ** 2) @ J
-    vals, vecs = eigh(B)
-    coord = vecs[:, -1] * math.sqrt(max(float(vals[-1]), 1e-9))
+    def predict_orders(self, rows):
+        es = self.event_scores(rows)
+        return [pick_order(R, e) for R, e in zip(rows, es)]
 
-    order_idx = np.argsort(coord)
-    order = [qlist[i] for i in order_idx]
-
-    pos = {q: i for i, q in enumerate(order)}
-    cue_pairs = [c.split("<") for c in cues if "<" in c]
-    violations = sum(pos[a] > pos[b] for a, b in cue_pairs if a in pos and b in pos)
-    if violations > len(cue_pairs) - violations:
-        coord = -coord
-        order_idx = np.argsort(coord)
-        order = [qlist[i] for i in order_idx]
-
-    ordered_coord = coord[order_idx]
-    return order, ordered_coord
-
-
-def mesh_pair_probabilities(events, cues, mesh, pairs):
-    order, coord = mesh_mds(events, cues, mesh)
-    cmap = {q: coord[i] for i, q in enumerate(order)}
-    out = []
-    for a, b in pairs:
-        diff = cmap[b] - cmap[a]
-        out.append(float(sigmoid(diff / MDS_SIGMOID_SCALE)))
-    return np.asarray(out, dtype=float)
-
-
-# --------------------------- global order decoder ----------------------------
-
-def refine_order(events, pairs, p_before, cues, mesh):
-    qlist = sorted(events)
-    qidx = {q: i for i, q in enumerate(qlist)}
-    W = np.zeros((len(qlist), len(qlist)), dtype=float)
-
-    for (a, b), p in zip(pairs, p_before):
-        l = float(logit(p))
-        W[qidx[a], qidx[b]] = l
-        W[qidx[b], qidx[a]] = -l
-
-    for c in cues:
-        a, b = c.split("<")
-        if a in qidx and b in qidx:
-            W[qidx[a], qidx[b]] += 4.0
-            W[qidx[b], qidx[a]] -= 4.0
-
-    seed = [qlist[i] for i in np.argsort(-W.sum(axis=1), kind="mergesort")]
-
-    mesh_expected = GAP_REP.copy()
-
-    def objective(order):
-        pos = {q: i for i, q in enumerate(order)}
-        val = 0.0
-        n = len(order)
-        for i in range(n):
-            ai = qidx[order[i]]
-            for j in range(i + 1, n):
-                bj = qidx[order[j]]
-                val += W[ai, bj]
-
-        # Add a soft global mesh-stress term. This uses only the supplied
-        # unsigned/coarsened mesh and is evaluated on the final permutation.
-        denom = max(1, n - 1)
-        for (a, b), g in mesh.items():
-            d_rank = abs(pos[a] - pos[b]) / denom
-            # Rank-scale target is intentionally coarse; the learned pair model
-            # remains the dominant ordering signal.
-            target = min(0.85, 0.10 + 0.12 * g)
-            val -= MESH_STRESS_WEIGHT * 4.0 * (d_rank - target) ** 2
-        return val
-
-    order = seed
-    best = objective(order)
-
-    for _ in range(12):
-        improved = False
-
-        for i in range(len(order) - 1):
-            cand = order.copy()
-            cand[i], cand[i + 1] = cand[i + 1], cand[i]
-            sc = objective(cand)
-            if sc > best + 1e-9:
-                order, best, improved = cand, sc, True
-
-        if len(order) <= 15:
-            for i in range(len(order)):
-                for j in range(i + 2, len(order)):
-                    cand = order.copy()
-                    x = cand.pop(i)
-                    cand.insert(j, x)
-                    sc = objective(cand)
-                    if sc > best + 1e-9:
-                        order, best, improved = cand, sc, True
-
-        if not improved:
-            break
-
-    return order
+    def predict(self, rows):
+        """Returns (order_idx, segment bounds) per row."""
+        orders = self.predict_orders(rows)
+        out = []
+        for R, o in zip(rows, orders):
+            n = R["n"]
+            f, idx = seg_features(R, o)
+            p = np.clip(self.m_same.predict(f), 1e-4, 1 - 1e-4)
+            delta = np.zeros((n, n))
+            for (i, j), pv in zip(idx, p):
+                delta[i, j] = math.log(pv / (1.0 - pv))
+            blp = np.zeros(n)
+            if BOUNDARY_W > 0 and n > 1:
+                pb = np.clip(self.m_bnd.predict(bnd_features(R, o)), 1e-4, 1 - 1e-4)
+                blp[:n - 1] = BOUNDARY_W * np.log(pb / (1.0 - pb))
+            out.append((o, dp_segments(n, delta, blp, R["ec"])))
+        return out
 
 
-# --------------------------- era segmentation -------------------------------
-
-def decode_segments(order, pair_same_prob, era_count):
-    n = len(order)
-    qidx = {q: i for i, q in enumerate(order)}
-
-    P = np.full((n, n), 0.5, dtype=float)
-    for (a, b), p in pair_same_prob.items():
-        i, j = qidx[a], qidx[b]
-        P[i, j] = P[j, i] = float(np.clip(p, 1e-5, 1 - 1e-5))
-
-    # If all pairs were same, the DP still yields the required nonempty segments.
-    base = 0.0
-    delta = np.zeros((n, n), dtype=float)
-    for i in range(n):
-        for j in range(i + 1, n):
-            p = P[i, j]
-            base += math.log(1.0 - p)
-            delta[i, j] = math.log(p) - math.log(1.0 - p)
-
-    bonus = np.zeros((n, n + 1), dtype=float)
-    for l in range(n):
-        cur = 0.0
-        for r in range(l + 1, n + 1):
-            j = r - 1
-            for i in range(l, j):
-                cur += delta[i, j]
-            bonus[l, r] = cur
-
-    K = min(int(era_count), n)
-    NEG = -1e100
-    dp = np.full((K + 1, n + 1), NEG)
-    prev = np.full((K + 1, n + 1), -1, dtype=int)
-    dp[0, 0] = 0.0
-
-    for k in range(1, K + 1):
-        for r in range(k, n + 1):
-            best = NEG
-            best_l = -1
-            for l in range(k - 1, r):
-                v = dp[k - 1, l] + bonus[l, r]
-                if v > best:
-                    best = v
-                    best_l = l
-            dp[k, r] = best
-            prev[k, r] = best_l
-
-    bounds = []
-    r = n
-    for k in range(K, 0, -1):
-        l = int(prev[k, r])
-        bounds.append((l, r))
-        r = l
-    bounds.reverse()
-
-    return [order[l:r] for l, r in bounds]
+def program_of(R, order, bounds):
+    qs = R["qs"]
+    segs = [[qs[k] for k in order[l:r]] for l, r in bounds]
+    toks = []
+    for si, seg in enumerate(segs):
+        toks.extend(seg)
+        if si < len(segs) - 1:
+            toks.append("BREAK")
+    return " ".join(toks), segs
 
 
-# ------------------------------- scoring ------------------------------------
-
-def gold_segments_from_program(program):
-    segs, cur = [], []
-    for tok in str(program).split():
-        if tok == "BREAK":
-            segs.append(cur)
-            cur = []
-        else:
-            cur.append(tok)
-    if cur:
-        segs.append(cur)
-    return segs
-
-
-def score_row(pred_order, pred_segments, gold_order, gold_segments):
-    n = len(gold_order)
-    if n <= 1:
-        O = 1.0
-    else:
-        pos_p = {q: i for i, q in enumerate(pred_order)}
-        agree = 0
-        total = n * (n - 1) // 2
-        for i in range(n):
-            for j in range(i + 1, n):
-                a, b = gold_order[i], gold_order[j]
-                agree += int((pos_p[a] - pos_p[b]) * (i - j) > 0)
-        C = agree / total
-        O = max(0.0, 2 * C - 1)
-
-    gseg = {q: si for si, seg in enumerate(gold_segments) for q in seg}
-    pseg = {q: si for si, seg in enumerate(pred_segments) for q in seg}
-    tp = tn = fp = fn = 0
-    for i in range(n):
-        for j in range(i + 1, n):
-            same_g = gseg[gold_order[i]] == gseg[gold_order[j]]
-            same_p = pseg[gold_order[i]] == pseg[gold_order[j]]
-            if same_g and same_p:
-                tp += 1
-            elif (not same_g) and (not same_p):
-                tn += 1
-            elif same_p:
-                fp += 1
-            else:
-                fn += 1
-
-    den = math.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
-    M = max(0.0, (tp * tn - fp * fn) / den) if den > 0 else 0.0
-
-    def edges(segs):
-        ed = set()
-        if not segs:
-            return ed
-        ed.add(("START", segs[0][0], "START"))
-        for seg in segs:
-            for a, b in zip(seg, seg[1:]):
-                ed.add((a, b, "WITHIN"))
-        for s1, s2 in zip(segs[:-1], segs[1:]):
-            ed.add((s1[-1], s2[0], "BREAK"))
-        ed.add(("END", segs[-1][-1], "END"))
-        return ed
-
-    eg, ep = edges(gold_segments), edges(pred_segments)
-    A = 2.0 * len(eg & ep) / max(1, len(eg) + len(ep))
-    return float(0.50 * O + 0.40 * M + 0.10 * A)
-
-
-# ----------------------------- model training -------------------------------
-
-def fit_models(train_df):
-    parsed, X, yord, ysame, texts, row_pairs, row_slices = build_pair_dataset(train_df)
-
-    order_model = lgb.train(
-        ORDER_PARAMS, lgb.Dataset(X, label=yord.astype(np.float32)),
-        num_boost_round=ORDER_ROUNDS
-    )
-    same_model = lgb.train(
-        SAME_PARAMS, lgb.Dataset(X, label=ysame.astype(np.float32)),
-        num_boost_round=SAME_ROUNDS
-    )
-
-    vectorizer = TfidfVectorizer(
-        ngram_range=(1, 2), min_df=2,
-        max_features=TEXT_MAX_FEATURES, sublinear_tf=True
-    )
-    Xt = vectorizer.fit_transform(texts)
-    text_model = LogisticRegression(
-        C=TEXT_C, max_iter=250, solver="liblinear", random_state=SEED
-    )
-    text_model.fit(Xt, yord)
-
-    return {
-        "parsed": parsed,
-        "X": X,
-        "yord": yord,
-        "ysame": ysame,
-        "texts": texts,
-        "row_pairs": row_pairs,
-        "row_slices": row_slices,
-        "order_model": order_model,
-        "same_model": same_model,
-        "vectorizer": vectorizer,
-        "text_model": text_model,
-    }
-
-
-def predict_rows(models, df):
-    parsed, X, _, _, texts, row_pairs, row_slices = build_pair_dataset(
-        df.assign(chronicle_program=[""] * len(df))
-    )
-    # The synthetic empty target above only affects parsing of the unused gold
-    # fields; all pair features remain test-only.
-    p_num = models["order_model"].predict(X)
-    p_txt = models["text_model"].predict_proba(models["vectorizer"].transform(texts))[:, 1]
-    p_same = models["same_model"].predict(X)
-
-    out = {}
-    cursor = 0
-    for rid, (_, row) in enumerate(df.iterrows()):
-        lo, hi = row_slices[rid]
-        pairs = row_pairs[rid]
-        pn = p_num[cursor:cursor + (hi - lo)]
-        pt = p_txt[cursor:cursor + (hi - lo)]
-        ps = p_same[cursor:cursor + (hi - lo)]
-        cursor = hi
-
-        mds_p = mesh_pair_probabilities(
-            parsed[rid][0], parsed[rid][2], parsed[rid][3], pairs
-        )
-        blend = W_NUMERIC * logit(pn) + W_TEXT * logit(pt) + W_MDS * logit(mds_p)
-        p_before = sigmoid(blend)
-
-        events, sources, cues, mesh, _, _ = parsed[rid]
-        order = refine_order(events, pairs, p_before, cues, mesh)
-        same_map = {(a, b): float(p) for (a, b), p in zip(pairs, ps)}
-        segs = decode_segments(order, same_map, int(row["era_count"]))
-
-        out[int(row["id"])] = " ".join(
-            [tok for si, seg in enumerate(segs)
-             for tok in (seg + (["BREAK"] if si < len(segs) - 1 else []))]
-        )
-
-    return out
-
-
-# --------------------------- validation harness -----------------------------
+# --------------------------- submission validation ----------------------------
 
 def validate_submission(df, submission):
-    expected = set(int(x) for x in df["id"])
-    rows = list(submission.itertuples(index=False))
     errors = []
-
     if list(submission.columns) != ["id", "chronicle_program"]:
         errors.append("wrong columns/order")
-    if len(rows) != len(df):
-        errors.append(f"wrong row count: {len(rows)}")
-    ids = [int(r.id) for r in rows]
+    if len(submission) != len(df):
+        errors.append("wrong row count: %d" % len(submission))
+    ids = [int(x) for x in submission["id"]]
     if len(ids) != len(set(ids)):
         errors.append("duplicate IDs")
-    if set(ids) != expected:
+    if set(ids) != set(int(x) for x in df["id"]):
         errors.append("ID set mismatch")
 
-    event_counts = dict(zip(df["id"].astype(int), df["event_count"].astype(int)))
-    era_counts = dict(zip(df["id"].astype(int), df["era_count"].astype(int)))
-    event_maps = {}
-
+    era = dict(zip(df["id"].astype(int), df["era_count"].astype(int)))
+    nev = dict(zip(df["id"].astype(int), df["event_count"].astype(int)))
+    handles = {}
     for _, row in df.iterrows():
-        events, _, _, _, _, _ = parse_row(row)
-        event_maps[int(row["id"])] = set(events)
+        ev, _, _, _ = parse_row(row)
+        handles[int(row["id"])] = set(ev)
 
-    for r in rows:
-        rid = int(r.id)
-        toks = str(r.chronicle_program).split()
-        if len(toks) == 0:
-            errors.append(f"{rid}: empty program")
+    for rid, prog in zip(submission["id"].astype(int), submission["chronicle_program"]):
+        prog = str(prog)
+        toks = prog.split()
+        if not toks:
+            errors.append("%d: empty program" % rid)
             continue
-        expected_events = event_counts[rid]
-        expected_breaks = era_counts[rid] - 1
-        if toks.count("BREAK") != expected_breaks:
-            errors.append(f"{rid}: wrong separator count")
-        handles = [t for t in toks if t != "BREAK"]
-        if len(handles) != expected_events:
-            errors.append(f"{rid}: wrong handle count")
-        if len(handles) != len(set(handles)):
-            errors.append(f"{rid}: repeated handle")
-        if set(handles) != event_maps[rid]:
-            errors.append(f"{rid}: handle set mismatch")
-        if "BREAK BREAK" in str(r.chronicle_program):
-            errors.append(f"{rid}: consecutive BREAK")
-        if str(r.chronicle_program).strip() != str(r.chronicle_program):
-            errors.append(f"{rid}: leading/trailing whitespace")
+        if prog != prog.strip() or "  " in prog:
+            errors.append("%d: bad spacing" % rid)
+        if "BREAK BREAK" in prog:
+            errors.append("%d: consecutive BREAK" % rid)
+        if toks[0] == "BREAK" or toks[-1] == "BREAK":
+            errors.append("%d: empty segment at edge" % rid)
+        if toks.count("BREAK") != era[rid] - 1:
+            errors.append("%d: wrong BREAK count" % rid)
+        hs = [t for t in toks if t != "BREAK"]
+        if len(hs) != nev[rid]:
+            errors.append("%d: wrong handle count" % rid)
+        if len(hs) != len(set(hs)):
+            errors.append("%d: repeated handle" % rid)
+        if set(hs) != handles[rid]:
+            errors.append("%d: handle set mismatch" % rid)
     return errors
 
 
-def build_validation_groups(df):
-    return make_component_groups(df, threshold=0.45)
+# ----------------------------------- runners ----------------------------------
 
-
-def run_cv(public_dir, out_json):
+def run_cv(public_dir, out_json, n_splits=4):
     seed_everything()
-    train = pd.read_csv(Path(public_dir) / "train.csv")
-    groups = build_validation_groups(train)
+    public_dir = Path(public_dir)
+    train = pd.read_csv(public_dir / "train.csv")
+    cands = build_candidates(train, "train")
+    rows = prepare_rows(train, cands, with_gold=True)
+    groups = make_groups(train, 0.45)
 
-    gkf = GroupKFold(4)
-    fold_scores = []
+    fold_scores, band_scores, comp = [], defaultdict(list), defaultdict(list)
+    slice_scores = defaultdict(list)
+    train_fit_scores = []
+    for fold, (tri, vai) in enumerate(GroupKFold(n_splits).split(np.arange(len(rows)),
+                                                                 groups=groups)):
+        TR = [rows[i] for i in tri]
+        VA = [rows[i] for i in vai]
+        model = EraMeshModel().fit(TR)
 
-    for fold, (tr_idx, va_idx) in enumerate(gkf.split(train, groups=groups)):
-        tr = train.iloc[tr_idx].copy()
-        va = train.iloc[va_idx].copy()
+        per_band = defaultdict(list)
+        for R, (o, b) in zip(VA, model.predict(VA)):
+            _, segs = program_of(R, o, b)
+            s, O, M, A = score_row([R["qs"][k] for k in o], segs, R["go"], R["gsegs"])
+            per_band[R["band"]].append(s)
+            comp["O"].append(O)
+            comp["M"].append(M)
+            comp["A"].append(A)
+            nb = "06-08" if R["n"] <= 8 else ("09-12" if R["n"] <= 12 else "13-18")
+            slice_scores[nb].append(s)
+        fs = float(np.mean([np.mean(per_band[b]) for b in BANDS]))
+        fold_scores.append(fs)
+        for b in BANDS:
+            band_scores[b].append(float(np.mean(per_band[b])))
 
-        models = fit_models(tr)
-
-        # Test/validation pair predictions.
-        parsed_pred, Xv, _, _, texts_v, pairs_v, slices_v = build_pair_dataset(
-            va.assign(chronicle_program=[""] * len(va))
-        )
-        parsed_gold = [parse_row(r) for _, r in va.iterrows()]
-        p_num = models["order_model"].predict(Xv)
-        p_txt = models["text_model"].predict_proba(models["vectorizer"].transform(texts_v))[:, 1]
-        p_same = models["same_model"].predict(Xv)
-
-        cursor = 0
-        scores = []
-
-        for rid, (_, row) in enumerate(va.iterrows()):
-            lo, hi = slices_v[rid]
-            pairs = pairs_v[rid]
-            pn = p_num[cursor:hi]
-            pt = p_txt[cursor:hi]
-            ps = p_same[cursor:hi]
-            cursor = hi
-
-            mds_p = mesh_pair_probabilities(
-                parsed_pred[rid][0], parsed_pred[rid][2], parsed_pred[rid][3], pairs
-            )
-            blend = W_NUMERIC * logit(pn) + W_TEXT * logit(pt) + W_MDS * logit(mds_p)
-            p_before = sigmoid(blend)
-
-            events, sources, cues, mesh, _, _ = parsed_pred[rid]
-            _, _, _, _, gold_order, gold_segments = parsed_gold[rid]
-            pred_order = refine_order(events, pairs, p_before, cues, mesh)
-            same_map = {(a, b): float(p) for (a, b), p in zip(pairs, ps)}
-            pred_segments = decode_segments(pred_order, same_map, int(row["era_count"]))
-            scores.append(score_row(
-                pred_order, pred_segments, gold_order, gold_segments
-            ))
-
-        fold_score = float(np.mean(scores))
-        fold_scores.append(fold_score)
-        print(f"[fold {fold}] score={fold_score:.5f}", flush=True)
+        tb = defaultdict(list)
+        for R, (o, b) in zip(TR, model.predict(TR)):
+            _, segs = program_of(R, o, b)
+            s, _, _, _ = score_row([R["qs"][k] for k in o], segs, R["go"], R["gsegs"])
+            tb[R["band"]].append(s)
+        train_fit_scores.append(float(np.mean([np.mean(tb[b]) for b in BANDS])))
+        print("[fold %d] val=%.5f train=%.5f  %s" %
+              (fold, fs, train_fit_scores[-1],
+               "  ".join("%s=%.4f" % (b, np.mean(per_band[b])) for b in BANDS)), flush=True)
 
     report = {
         "validation": {
             "scheme": "4-fold GroupKFold on solver-visible row-component proxy "
-                      "(five-token shingle Jaccard >= 0.45)",
+                      "(five-token shingle Jaccard >= 0.45); fold score = equal "
+                      "mean of easy/medium/hard row means, exact official metric",
             "fold_scores": [round(x, 5) for x in fold_scores],
             "mean": round(float(np.mean(fold_scores)), 5),
             "std": round(float(np.std(fold_scores)), 5),
             "worst": round(float(np.min(fold_scores)), 5),
-        },
-        "model": {
-            "numeric_pair_model": "LightGBM",
-            "text_pair_model": "TF-IDF + LogisticRegression",
-            "mesh_order_model": "1-D classical MDS on unsigned distance mesh",
-            "same_period_model": "LightGBM",
-            "blend_logit_weights": [W_NUMERIC, W_TEXT, W_MDS],
-            "mesh_stress_weight": MESH_STRESS_WEIGHT,
-        },
-        "constraints": {
-            "pretrained_models": False,
-            "external_data": False,
-            "external_lookup": False,
-            "test_labels": False,
-            "hard_coded_test_outputs": False,
-            "deterministic": True,
-        },
+            "train_fit_mean": round(float(np.mean(train_fit_scores)), 5),
+            "by_band": {b: round(float(np.mean(band_scores[b])), 5) for b in BANDS},
+            "components": {k: round(float(np.mean(v)), 5) for k, v in sorted(comp.items())},
+            "by_event_count": {k: round(float(np.mean(v)), 5)
+                               for k, v in sorted(slice_scores.items())},
+        }
     }
     Path(out_json).write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
+    return report
 
 
 def run_submission(public_dir, submission_out):
@@ -806,36 +857,30 @@ def run_submission(public_dir, submission_out):
     train = pd.read_csv(public_dir / "train.csv")
     test = pd.read_csv(public_dir / "test.csv")
 
-    models = fit_models(train)
-    pred_map = predict_rows(models, test)
+    tr_rows = prepare_rows(train, build_candidates(train, "train"), with_gold=True)
+    te_rows = prepare_rows(test, build_candidates(test, "test"), with_gold=False)
+
+    model = EraMeshModel().fit(tr_rows)
+    preds = {}
+    for R, (o, b) in zip(te_rows, model.predict(te_rows)):
+        preds[R["id"]], _ = program_of(R, o, b)
 
     submission = pd.DataFrame({
         "id": test["id"].astype(int),
-        "chronicle_program": [pred_map[int(x)] for x in test["id"]],
+        "chronicle_program": [preds[int(x)] for x in test["id"]],
     })
-
     errors = validate_submission(test, submission)
     if errors:
         raise RuntimeError("Submission validation failed: " + " | ".join(errors[:12]))
 
-    Path(submission_out).parent.mkdir(parents=True, exist_ok=True)
-    submission.to_csv(submission_out, index=False)
-
-    # Save a small run report next to the CSV.
-    counts = submission["chronicle_program"].str.split().map(
-        lambda x: len([t for t in x if t != "BREAK"])
-    )
-    run_info = {
-        "rows": len(submission),
+    out = Path(submission_out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    submission.to_csv(out, index=False, lineterminator="\n")
+    print(json.dumps({
+        "rows": int(len(submission)),
         "validation_errors": 0,
-        "mean_event_count": float(counts.mean()),
-        "min_event_count": int(counts.min()),
-        "max_event_count": int(counts.max()),
-        "sha256": hashlib.sha256(Path(submission_out).read_bytes()).hexdigest(),
-    }
-    info_path = Path(submission_out).with_name("run_info.json")
-    info_path.write_text(json.dumps(run_info, indent=2), encoding="utf-8")
-    print(json.dumps(run_info, indent=2))
+        "sha256": hashlib.sha256(out.read_bytes()).hexdigest(),
+    }, indent=2))
 
 
 def main():

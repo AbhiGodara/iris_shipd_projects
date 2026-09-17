@@ -1,0 +1,30 @@
+{
+  "validation": {
+    "scheme": "4-fold GroupKFold on solver-visible row-component proxy (five-token shingle Jaccard >= 0.45); fold score = equal mean of easy/medium/hard row means, exact official metric",
+    "fold_scores": [
+      0.80958,
+      0.79229,
+      0.79431,
+      0.79869
+    ],
+    "mean": 0.79872,
+    "std": 0.00668,
+    "worst": 0.79229,
+    "train_fit_mean": 0.8778,
+    "by_band": {
+      "easy": 0.85872,
+      "medium": 0.82616,
+      "hard": 0.71126
+    },
+    "components": {
+      "A": 0.57898,
+      "M": 0.75642,
+      "O": 0.87635
+    },
+    "by_event_count": {
+      "06-08": 0.82419,
+      "09-12": 0.79006,
+      "13-18": 0.78437
+    }
+  }
+}
