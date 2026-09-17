@@ -1,0 +1,435 @@
+{
+  "challenge": "Grid Balancing Action Portfolio",
+  "best_model": {
+    "name": "GBDT+SetNet blend with LightGBM action heads",
+    "candidate_acceptance": "LightGBM binary (lr 0.03, 31 leaves, min_data 100, 1000 rounds) blended 0.4/0.6 in logit space with a from-scratch set-attention network (unit-key embeddings, 1 self-attention block, attention pooling; 12 epochs, dropout 0.25, AdamW wd 1e-3; 3 seeds averaged; CPU, deterministic)",
+    "features": "29 raw candidate features, 6 context values + settlement period, direction-aware merit-order rank/cumulative MW/price z-scores, episode aggregates, nested leave-one-day-out unit-token priors (acceptance rate, period-bucket rate, day fraction, instruction mean/sd, coverage), per-unit input z-scores",
+    "portfolio_size": "expected-F1-optimal k from blended probabilities x 1.1 (retuned under official metric)",
+    "instruction_minute": "LightGBM L1 on accepted training actions, rounded to integer, clipped [-59, 29]",
+    "trajectory": "per-minute coverage probability (LightGBM binary) decoded by expected-IoU best contiguous interval; per-minute level residual to PN (LightGBM L1), snapped to MEL/MIL/0/PN-start/PN-end when within max(10MW, 10%); compressed to piecewise-constant segments",
+    "rejected": "temporal lag/lead features across episodes, LambdaRank/xendcg, count regressors, multi-task NN heads, coarse instruction rounding (see experiments.csv)"
+  },
+  "validation_scheme": "4-fold GroupKFold by day_group (sorted day tokens, i % 4); all token/unit statistics recomputed inside each fold with leave-one-day-out for training rows",
+  "metric_note": "The official challenge description (exact formulas) was not available locally. 'main' is a local reconstruction: 0.40*F1 + F1*(0.15*instruction + 0.25*trajectory + 0.15*tie-aware ordering) + 0.05*count, instruction=exp(-|dt|/15), trajectory=0.5*tIoU+0.5*tIoU*level_acc with level_acc=exp(-err/max(10,0.1|true|)), ordering=pairwise concordance with 0.5 for ties. Other keys are alternative plausible definitions used to check that decisions are robust.",
+  "cv_fold_scores": {
+    "main": {
+      "folds": [
+        0.42707,
+        0.35602,
+        0.39261,
+        0.35138
+      ],
+      "mean": 0.38177,
+      "std": 0.03064,
+      "worst": 0.35138,
+      "median": 0.37431
+    },
+    "rec_cov": {
+      "folds": [
+        0.45516,
+        0.38235,
+        0.43068,
+        0.40119
+      ],
+      "mean": 0.41734,
+      "std": 0.02781,
+      "worst": 0.38235,
+      "median": 0.41593
+    },
+    "lin_time": {
+      "folds": [
+        0.43457,
+        0.36162,
+        0.39944,
+        0.35743
+      ],
+      "mean": 0.38827,
+      "std": 0.03134,
+      "worst": 0.35743,
+      "median": 0.38053
+    },
+    "strict_lev": {
+      "folds": [
+        0.4023,
+        0.33263,
+        0.36986,
+        0.33184
+      ],
+      "mean": 0.35916,
+      "std": 0.02926,
+      "worst": 0.33184,
+      "median": 0.35124
+    },
+    "loose_lev": {
+      "folds": [
+        0.43555,
+        0.36387,
+        0.4002,
+        0.35786
+      ],
+      "mean": 0.38937,
+      "std": 0.0312,
+      "worst": 0.35786,
+      "median": 0.38203
+    },
+    "lenient": {
+      "folds": [
+        0.45397,
+        0.37806,
+        0.41739,
+        0.37333
+      ],
+      "mean": 0.40569,
+      "std": 0.0327,
+      "worst": 0.37333,
+      "median": 0.39773
+    }
+  },
+  "cv_components_mean": {
+    "f1": 0.50288,
+    "prec": 0.45681,
+    "rec": 0.63526,
+    "inst": 0.53834,
+    "traj": 0.41859,
+    "order": 0.66448,
+    "count": 0.65949,
+    "abs_ins_err": 11.64814
+  },
+  "cv_runtime_s": 3918.1,
+  "slices": {
+    "by_true_portfolio_size": {
+      "0": {
+        "main": 0.0,
+        "f1": 0.0,
+        "prec": 0.0,
+        "rec": 0.0,
+        "traj": 0.0,
+        "inst": 0.0,
+        "order": 0.0,
+        "n": 6
+      },
+      "1-20": {
+        "main": 0.1738,
+        "f1": 0.2464,
+        "prec": 0.1606,
+        "rec": 0.6932,
+        "traj": 0.3763,
+        "inst": 0.4676,
+        "order": 0.6513,
+        "n": 82
+      },
+      "21-50": {
+        "main": 0.3354,
+        "f1": 0.4557,
+        "prec": 0.3711,
+        "rec": 0.6384,
+        "traj": 0.3663,
+        "inst": 0.5434,
+        "order": 0.6501,
+        "n": 279
+      },
+      "51-80": {
+        "main": 0.4295,
+        "f1": 0.564,
+        "prec": 0.5272,
+        "rec": 0.6316,
+        "traj": 0.4409,
+        "inst": 0.5585,
+        "order": 0.6529,
+        "n": 201
+      },
+      "81+": {
+        "main": 0.4972,
+        "f1": 0.6299,
+        "prec": 0.6446,
+        "rec": 0.6297,
+        "traj": 0.5006,
+        "inst": 0.5566,
+        "order": 0.7226,
+        "n": 196
+      }
+    },
+    "by_candidate_count": {
+      "<=1470": {
+        "main": 0.4293,
+        "f1": 0.5607,
+        "prec": 0.5241,
+        "rec": 0.6709,
+        "traj": 0.4509,
+        "inst": 0.5513,
+        "order": 0.6637,
+        "n": 177
+      },
+      "1471-1500": {
+        "main": 0.3883,
+        "f1": 0.5075,
+        "prec": 0.4592,
+        "rec": 0.6366,
+        "traj": 0.4237,
+        "inst": 0.5499,
+        "order": 0.6638,
+        "n": 309
+      },
+      ">1500": {
+        "main": 0.3442,
+        "f1": 0.4609,
+        "prec": 0.4113,
+        "rec": 0.6111,
+        "traj": 0.3923,
+        "inst": 0.5173,
+        "order": 0.6657,
+        "n": 278
+      }
+    },
+    "by_settlement_period": {
+      "0-15": {
+        "main": 0.3498,
+        "f1": 0.4577,
+        "prec": 0.4235,
+        "rec": 0.5943,
+        "traj": 0.4122,
+        "inst": 0.5373,
+        "order": 0.679,
+        "n": 256
+      },
+      "16-31": {
+        "main": 0.401,
+        "f1": 0.5283,
+        "prec": 0.4852,
+        "rec": 0.645,
+        "traj": 0.4321,
+        "inst": 0.5415,
+        "order": 0.6332,
+        "n": 252
+      },
+      "32-47": {
+        "main": 0.3947,
+        "f1": 0.523,
+        "prec": 0.4622,
+        "rec": 0.6667,
+        "traj": 0.4117,
+        "inst": 0.5363,
+        "order": 0.6807,
+        "n": 256
+      }
+    },
+    "actions_by_direction": {
+      "bid(-1)": {
+        "n": 27186,
+        "recall_selected": 0.6698,
+        "abs_ins_err_matched": 11.036,
+        "traj_main_matched": 0.4751
+      },
+      "offer(+1)": {
+        "n": 17614,
+        "recall_selected": 0.5832,
+        "abs_ins_err_matched": 10.678,
+        "traj_main_matched": 0.4378
+      }
+    },
+    "actions_by_true_instruction_bucket": {
+      "-59..-30": {
+        "n": 8821,
+        "recall_selected": 0.7043,
+        "abs_ins_err_matched": 11.288,
+        "traj_main_matched": 0.6089
+      },
+      "-29..-15": {
+        "n": 10967,
+        "recall_selected": 0.6489,
+        "abs_ins_err_matched": 10.923,
+        "traj_main_matched": 0.4548
+      },
+      "-14..0": {
+        "n": 14210,
+        "recall_selected": 0.6567,
+        "abs_ins_err_matched": 5.524,
+        "traj_main_matched": 0.4629
+      },
+      "1..15": {
+        "n": 6908,
+        "recall_selected": 0.5714,
+        "abs_ins_err_matched": 14.847,
+        "traj_main_matched": 0.3958
+      },
+      "16..29": {
+        "n": 3894,
+        "recall_selected": 0.481,
+        "abs_ins_err_matched": 28.094,
+        "traj_main_matched": 0.1321
+      }
+    },
+    "actions_by_unit_token_train_acceptances": {
+      "unseen": {
+        "n": 510,
+        "recall_selected": 0.0,
+        "abs_ins_err_matched": null,
+        "traj_main_matched": null
+      },
+      "1-10": {
+        "n": 1724,
+        "recall_selected": 0.0887,
+        "abs_ins_err_matched": 11.261,
+        "traj_main_matched": 0.4396
+      },
+      "11-50": {
+        "n": 8913,
+        "recall_selected": 0.3971,
+        "abs_ins_err_matched": 10.441,
+        "traj_main_matched": 0.4933
+      },
+      "51-200": {
+        "n": 30135,
+        "recall_selected": 0.7192,
+        "abs_ins_err_matched": 10.748,
+        "traj_main_matched": 0.4617
+      },
+      ">200": {
+        "n": 3518,
+        "recall_selected": 0.8854,
+        "abs_ins_err_matched": 12.521,
+        "traj_main_matched": 0.4264
+      }
+    }
+  },
+  "starter_baseline_same_cv_main": {
+    "folds": [
+      0.3646,
+      0.2902,
+      0.3335,
+      0.2982
+    ],
+    "mean": 0.3216,
+    "worst": 0.2902
+  },
+  "runtime": {
+    "final_submission_run_s": 546.4,
+    "repeat_run_s_parallel_load": 1109.8,
+    "cv_4fold_s": 3918.1,
+    "note": "uncontended single run on local i5-12500H, 8 pinned CPU threads, no GPU"
+  },
+  "rows": {
+    "train": 764,
+    "test": 240
+  },
+  "predicted_portfolio_count_test": {
+    "mean": 115.02083333333333,
+    "min": 51,
+    "max": 167,
+    "median": 118.0
+  },
+  "predicted_portfolio_count_note": "Test days have much higher wind (negative-price bid PN 14-20k MW vs train mean 11k); in CV, true counts in that regime were 90-112 and the decoder predicted 1.07-1.08x truth, so ~125 is consistent",
+  "instruction_error_cv": {
+    "mean_abs_err_matched_min": 11.65,
+    "instruction_similarity": 0.538,
+    "ordering": 0.664
+  },
+  "trajectory_diagnostics_cv": {
+    "trajectory_similarity_main": 0.419,
+    "temporal_iou": 0.529,
+    "level_acc_on_overlap": 0.59,
+    "per_minute_coverage_auc": 0.719,
+    "mean_pred_cover_min": 26.0,
+    "mean_true_cover_min": 15.2
+  },
+  "overfitting_check_train_vs_oof": {
+    "fold0_insample_main": 0.4684,
+    "fold0_oof_main": 0.42707,
+    "insample_components": {
+      "f1": 0.6091,
+      "prec": 0.5351,
+      "rec": 0.7553,
+      "inst": 0.619,
+      "traj": 0.413,
+      "order": 0.7079,
+      "count": 0.6856
+    },
+    "cv_std": 0.03064
+  },
+  "determinism_test": {
+    "run1_sha256": "9bbd88047801b7e1e66e9b757daa00234ec58599519d82c6e65a2a7b33ef7405",
+    "run2_sha256": "9bbd88047801b7e1e66e9b757daa00234ec58599519d82c6e65a2a7b33ef7405",
+    "identical": true
+  },
+  "submission_validation": {
+    "valid": true,
+    "n_errors": 0,
+    "first_errors": [],
+    "rows": 240,
+    "unique_ids": 240,
+    "expected_ids": 240,
+    "portfolio_size": {
+      "mean": 115.02083333333333,
+      "median": 118.0,
+      "min": 51,
+      "max": 167
+    },
+    "segments_per_action": {
+      "mean": 3.131823944937511,
+      "max": 27
+    },
+    "instruction_minute": {
+      "mean": -21.364426734287267,
+      "min": -59.0,
+      "max": 9.0
+    }
+  },
+  "command": "python3 solution.py . submission.csv   (run from the challenge directory)",
+  "official_metric_cv": {
+    "definition": "0.40*F + F*(0.15*max(0,1-|dt|/20) + 0.25*(0.45*tIoU + 0.55*tIoU*max(0,1-MAE/(2*max(25,0.15*mean|true|+25)))) + 0.15*tie-aware ordering) + 0.05*count similarity; one-minute grid",
+    "scheme": "4-fold GroupKFold by day_group; out-of-fold predictions of the final pipeline components (GBDT + 3-seed SetNet blend 0.4/0.6, LightGBM heads v3)",
+    "folds": [
+      0.4359,
+      0.3579,
+      0.3958,
+      0.3588
+    ],
+    "mean": 0.3871,
+    "std": 0.0321,
+    "worst": 0.3579,
+    "median": 0.3773,
+    "components": {
+      "F1": 0.5031,
+      "instruction": 0.4905,
+      "trajectory": 0.4766,
+      "ordering": 0.6602,
+      "count": 0.681
+    },
+    "previous_config_k1.2": {
+      "folds": [
+        0.4323,
+        0.3617,
+        0.3936,
+        0.3579
+      ],
+      "mean": 0.3864,
+      "worst": 0.3579
+    },
+    "targeted_tests_official": {
+      "k_scale": {
+        "0.9": 0.3816,
+        "1.0": 0.3855,
+        "1.1": 0.3871,
+        "1.2": 0.3864,
+        "1.3": 0.3836
+      },
+      "coverage_prob_scale_0.85/1.15/1.3": [
+        0.387,
+        0.3871,
+        0.3871
+      ],
+      "snap_off": 0.3869,
+      "snap_2": 0.3867,
+      "instruction_stretch_1.2/1.4": [
+        0.3869,
+        0.3856
+      ],
+      "threshold_coverage_0.3/0.4": [
+        0.3854,
+        0.3802
+      ]
+    },
+    "note": "ordering (pairwise concordance, 0.5 credit on ties) and count similarity (min/max) follow the stated components; tie handling detail assumed"
+  },
+  "cv_fold_scores_reconstructed_metric_note": "cv_fold_scores/cv_components_mean were measured earlier with the reconstructed metric (k x1.2); official metric results are in official_metric_cv"
+}

@@ -1,0 +1,39 @@
+{
+    "challenge": "Grid Balancing Action Portfolio",
+    "difficulty": "Hard",
+    "domain": "From Scratch",
+    "public_ai_benchmark": 0.5,
+    "dataset": {
+        "train_rows": 764,
+        "test_rows": 240,
+        "train_days": 16,
+        "test_days": 5,
+        "npz_keys": [
+            "features",
+            "candidate_ids",
+            "unit_tokens",
+            "directions",
+            "context",
+            "feature_names",
+            "context_names"
+        ]
+    },
+    "challenge_provided_reference_points": {
+        "learned_sample_score": 0.258693,
+        "frequency_merit_cpu_baseline": 0.301272,
+        "capability_matched_portfolio_baseline": 0.373229
+    },
+    "starter_solution": {
+        "status": "constructed_but_not_executed_in_this_environment",
+        "approach": [
+            "HistGradientBoosting candidate acceptance model",
+            "episode-level learned action count model",
+            "instruction-time regression on accepted training actions",
+            "trajectory start/end regression",
+            "trajectory level residual regression relative to pn_mean_mw",
+            "day_group grouped validation",
+            "strict submission schema validation"
+        ]
+    },
+    "honesty_note": "The NPZ train/test folders are described by the supplied challenge files but were not attached in the current conversation runtime, so this starter report does not claim a new locally measured validation score. Claude Code should run the pipeline on the full downloaded dataset before selecting a final model."
+}

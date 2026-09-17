@@ -1,0 +1,3 @@
+# Grid Balancing Action Portfolio data
+
+Each `episode_path` is a compressed NumPy archive readable with `numpy.load(path, allow_pickle=False)`. It contains `features` (candidates × features), `candidate_ids`, stable pseudonymous `unit_tokens`, `directions` (+1 offer, -1 bid), a row-level `context` vector, and the matching name arrays. `day_group` is an opaque date-family token for group-aware validation; it does not encode chronological order. Training labels and submissions use JSON arrays of ordered action objects. See `sample_submission.csv` and the challenge description for the exact schema.

@@ -1,0 +1,12 @@
+{
+  "train_rows": 764,
+  "test_rows": 240,
+  "runtime_s": 546.4,
+  "predicted_actions": {
+    "mean": 115.02083333333333,
+    "min": 51,
+    "max": 167,
+    "median": 118.0
+  },
+  "validation_errors": 0
+}
