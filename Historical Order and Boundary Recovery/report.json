@@ -1,0 +1,51 @@
+{
+    "validation": {
+        "scheme": "4-fold GroupKFold on solver-visible row-component proxy (five-token shingle Jaccard >= 0.45)",
+        "fold_scores": [
+            0.56892,
+            0.56674,
+            0.559,
+            0.4967
+        ],
+        "mean": 0.54784,
+        "std": 0.02976,
+        "worst": 0.4967
+    },
+    "model": {
+        "numeric_pair_model": "LightGBM",
+        "text_pair_model": "TF-IDF + LogisticRegression",
+        "mesh_order_model": "1-D classical MDS on unsigned distance mesh",
+        "same_period_model": "LightGBM",
+        "blend_logit_weights": [
+            0.6,
+            0.2,
+            0.2
+        ],
+        "mesh_stress_weight": 0.8
+    },
+    "constraints": {
+        "pretrained_models": false,
+        "external_data": false,
+        "external_lookup": false,
+        "test_labels": false,
+        "hard_coded_test_outputs": false,
+        "deterministic": true
+    },
+    "final_submission": {
+        "rows": 522,
+        "columns": [
+            "id",
+            "chronicle_program"
+        ],
+        "ids_unique": true,
+        "runtime_runs_s": [
+            24.3,
+            23.4
+        ],
+        "sha256_run1": "481b0c7e64ec41e736788eb77cea3a7c81cb0320c59bcc85f7b84fdfea519130",
+        "sha256_run2": "481b0c7e64ec41e736788eb77cea3a7c81cb0320c59bcc85f7b84fdfea519130",
+        "identical": true,
+        "generated_by": "solution.py",
+        "submission_validation_errors": 0
+    }
+}
