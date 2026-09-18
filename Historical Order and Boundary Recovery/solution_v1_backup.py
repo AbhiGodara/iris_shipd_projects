@@ -69,14 +69,12 @@ HIC = np.array([3., 10., 25., 60., 150., 300., 900.])    # bounded, for features
 INF = 1e9
 
 CUE_WEIGHT = 500.0          # cue violations dominate mesh infeasibility
-N_RESTART = 70              # local-search restarts per row
-WANT_CANDS = 45             # distinct feasible orders to collect
-PATIENCE = 16               # restarts without a new distinct solution
-CONSENSUS_TEMP = 1.0 / 3.0  # temperature for candidate-weighted consensus (scaled by n).
-#   Tuned as 2.0 against a candidate score carrying an extra 6x factor, so the
-#   equivalent value against the raw dot-product score used here is 2.0 / 6.
+N_RESTART = 26              # local-search restarts per row
+WANT_CANDS = 20             # distinct feasible orders to collect
+PATIENCE = 8                # restarts without a new distinct solution
+CONSENSUS_TEMP = 1.0        # temperature for candidate-weighted consensus
 POINT_W = 0.60              # structural vs text chronological score
-BOUNDARY_W = 2.0            # weight of the break model inside the DP
+BOUNDARY_W = 1.0            # weight of the break model inside the DP
 
 POINT_PARAMS = dict(objective="regression", learning_rate=0.05, num_leaves=31,
                     min_data_in_leaf=25, feature_fraction=0.8, bagging_fraction=0.8,
@@ -415,9 +413,7 @@ def pick_order(R, escore, temp=CONSENSUS_TEMP):
     best = list(R["cands"][int(np.argmax(s))])
     if temp <= 0 or len(R["cands"]) == 1:
         return best
-    # Candidate scores grow ~O(n^2); dividing by n keeps the effective
-    # temperature comparable across row sizes.
-    wt = np.exp((s - s.max()) / (temp * max(1.0, n)))
+    wt = np.exp((s - s.max()) / temp)
     wt /= wt.sum()
     M = np.zeros((n, n))
     for wk, c in zip(wt, R["cands"]):

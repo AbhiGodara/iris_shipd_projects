@@ -1,14 +1,10 @@
-run_id,description,grouped_cv_mean,worst_fold,notes
-A0,"supplied starter: LightGBM+TFIDF pairwise precedence, MDS mesh, DP eras",0.54784,0.49670,baseline from supplied report.json
-B1,mesh recast as difference-constraint system; local search for ONE feasible order; learned same-era + DP,0.77665,0.76796,O=0.865 M=0.727 A=0.545
-B2,B1 + learned break-boundary model in DP (weight 0.5),0.77745,0.76897,small consistent gain
-B3,B1 + break-boundary model (weight 1.0),0.77809,0.76867,weight 1.0 kept
-B4,"B1 + candidate consensus, temp 0.5",0.78993,0.78203,smooth unimodal sweep
-B5,"B1 + candidate consensus, temp 1.0",0.79734,0.79080,sweep peak
-B6,"B1 + candidate consensus, temp 2.0",0.79319,0.78033,
-B7,"B1 + candidate consensus, temp 3.0",0.79030,0.77583,
-B8,"B1 + candidate consensus, temp 5.0",0.78815,0.77623,
-B9,"B1 + candidate consensus, temp 8.0",0.78593,0.76906,
-C1,"consensus temp 1.0 + boundary weight 1.0, no numeric guard",0.79873,0.79148,config chosen from sweeps; no guard for non-feasible rows
-C2,"C1 + guard clipping BOTH gap bounds to [0,900]",0.79699,0.79027,rejected: capping the lower bound discards real long-chronology gaps
-C3,FINAL SHIPPED: C1 + guard clipping ONLY the upper bound,0.79872,0.79229,recovers C1 exactly on feasible rows; best worst-fold; generated submission.csv
+run_id,description,grouped_cv_mean,worst_fold,std,hard_band,notes
+V1,"PREVIOUS SHIPPED: 26 restarts/20 cands, consensus temp 1.0 (unscaled), boundary w=1.0",0.79872,0.79229,0.00668,0.71126,reference
+E1,+ score-guided feasible search (maximise learned score inside feasible set),0.78832,0.77823,0.01037,0.69340,"REJECTED: train-fit 0.898, overfits the learned score"
+E2,"+ pairwise directed chronology model (LightGBM, symmetrised) for ranking",0.79761,0.79104,0.00850,0.71270,helped on small cand set; REJECTED once E3 landed
+E3,enlarged feasible candidate set: 70 restarts / 45 wanted / patience 16,0.80155,0.79153,0.00630,0.72090,"ACCEPTED: gold-in-set 0.566->0.690, oracle-O 0.955->0.975"
+E3+E2,E3 combined with the pairwise model,0.79808,0.79423,0.00357,0.71690,REJECTED: pairwise hurts mean once the set is larger
+E4,"E3 + consensus temperature retuned for the larger set (2.0, n-scaled)",0.80163,0.79910,0.00223,0.72170,ACCEPTED
+E5,E4 + DP boundary weight 2.0,0.80266,0.79835,0.00349,0.72286,ACCEPTED
+E5b,E5 + pairwise distance scaling of same-era log-odds (pscale 0.5),0.80270,0.79696,0.00440,0.72040,"REJECTED: extra parameter, no real gain"
+V2,FINAL SHIPPED = E5 (verified end-to-end in solution.py),0.80266,0.79835,0.00349,0.72286,generated submission.csv

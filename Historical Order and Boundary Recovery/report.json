@@ -2,38 +2,58 @@
   "validation": {
     "scheme": "4-fold GroupKFold on solver-visible row-component proxy (five-token shingle Jaccard >= 0.45); fold score = equal mean of easy/medium/hard row means, exact official metric",
     "fold_scores": [
-      0.80958,
-      0.79229,
-      0.79431,
-      0.79869
+      0.80561,
+      0.79835,
+      0.80656,
+      0.80013
     ],
+    "mean": 0.80266,
+    "std": 0.00349,
+    "worst": 0.79835,
+    "train_fit_mean": 0.86901,
+    "by_band": {
+      "easy": 0.85843,
+      "medium": 0.8267,
+      "hard": 0.72286
+    },
+    "components": {
+      "A": 0.58364,
+      "M": 0.76227,
+      "O": 0.879
+    },
+    "by_event_count": {
+      "06-08": 0.82959,
+      "09-12": 0.79638,
+      "13-18": 0.78469
+    }
+  },
+  "previous_version_for_comparison": {
+    "version": "v1",
     "mean": 0.79872,
     "std": 0.00668,
     "worst": 0.79229,
-    "train_fit_mean": 0.8778,
     "by_band": {
       "easy": 0.85872,
       "medium": 0.82616,
       "hard": 0.71126
     },
     "components": {
-      "A": 0.57898,
+      "O": 0.87635,
       "M": 0.75642,
-      "O": 0.87635
-    },
-    "by_event_count": {
-      "06-08": 0.82419,
-      "09-12": 0.79006,
-      "13-18": 0.78437
+      "A": 0.57898
     }
   },
   "model": {
-    "order_stage": "distance_mesh recast as an interval difference-constraint system; min-plus (Floyd-Warshall) closure decides feasibility; local search collects distinct feasible permutations; precedence_cues are hard constraints and fix the reflection symmetry",
+    "order_stage": "distance_mesh recast as an interval difference-constraint system; min-plus (Floyd-Warshall) closure decides feasibility; local search collects distinct feasible permutations (70 restarts, up to 45 kept); precedence_cues are hard constraints and fix the reflection symmetry",
     "candidate_ranking": "LightGBM pointwise chronological score (structural features) blended 0.60/0.40 with Ridge on TF-IDF of masked event/source text",
-    "consensus": "temperature-weighted (T=1.0) marginals over feasible candidates, decoded by local search maximising expected pairwise concordance",
+    "consensus": "temperature-weighted marginals over the feasible candidate set (temp = 1/3, scaled by n), decoded by local search maximising expected pairwise concordance",
     "same_era_model": "LightGBM on tight per-pair time-gap bounds from the closure",
-    "boundary_model": "LightGBM break model on consecutive positions, weight 1.0 in the DP",
-    "segmentation": "dynamic programming into exactly era_count contiguous nonempty eras"
+    "boundary_model": "LightGBM break model on consecutive positions, weight 2.0 in the DP",
+    "segmentation": "dynamic programming into exactly era_count contiguous nonempty eras",
+    "rejected": [
+      "score-guided search inside the feasible set (overfits the learned score)",
+      "pairwise directed chronology model (net negative once the candidate set grew)"
+    ]
   },
   "constraints": {
     "pretrained_models": false,
@@ -53,11 +73,11 @@
     "generated_by": "solution.py",
     "command": "python solution.py . submission.csv",
     "runtime_runs_s": [
-      281,
-      281
+      490,
+      490
     ],
-    "sha256_run1": "fe3ae61b580d1dec73aa844305f696cbd316c5a077ec9e207041f94fdbc63fe7",
-    "sha256_run2": "fe3ae61b580d1dec73aa844305f696cbd316c5a077ec9e207041f94fdbc63fe7",
+    "sha256_run1": "18d06e7f38e397bb6da7db208f20bb493427f1a1768ba79ca2afd3382dc19094",
+    "sha256_run2": "18d06e7f38e397bb6da7db208f20bb493427f1a1768ba79ca2afd3382dc19094",
     "identical": true,
     "submission_validation_errors": 0,
     "independent_validator_errors": 0
