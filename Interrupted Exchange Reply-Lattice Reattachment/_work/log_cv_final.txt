@@ -1,0 +1,36 @@
+[fold 0] val=0.53774 train_fit=1.00000 t=56s
+[fold 1] val=0.55879 train_fit=1.00000 t=94s
+[fold 2] val=0.53795 train_fit=1.00000 t=150s
+[fold 3] val=0.55486 train_fit=1.00000 t=178s
+{
+  "validation": {
+    "scheme": "4-fold GroupKFold by exchange group; exact published mean_clipped_structured_brier_v1 metric; memory features out-of-fold by group",
+    "fold_scores": [
+      0.537736,
+      0.558789,
+      0.537947,
+      0.554856
+    ],
+    "mean": 0.547332,
+    "std": 0.009592,
+    "worst": 0.537736,
+    "brier_component_mean": 0.137521,
+    "structure_component_mean": 0.0
+  },
+  "decoding_comparison": {
+    "map_permutation": 0.547332,
+    "softmax_T=1.0": 0.408138,
+    "softmax_T=0.5": 0.478333,
+    "softmax_T=0.25": 0.513981,
+    "softmax_T=0.1": 0.533612
+  },
+  "exact_permutation_accuracy": 0.547331,
+  "cell_assignment_accuracy": 0.724958,
+  "train_fit_scores": [
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "runtime_s": 177.7
+}

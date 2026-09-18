@@ -1,0 +1,168 @@
+featurized 1.8s
+=== fold 0
+  ep00 train_ce=2.8422 val_nll=2.0176 val_score(T=1)=0.1176
+  ep01 train_ce=1.3332 val_nll=1.5211 val_score(T=1)=0.3280
+  ep02 train_ce=0.1660 val_nll=2.7597 val_score(T=1)=0.3908
+  ep03 train_ce=0.0749 val_nll=3.1550 val_score(T=1)=0.3783
+  ep04 train_ce=0.0418 val_nll=5.3626 val_score(T=1)=0.4126
+  ep05 train_ce=0.0177 val_nll=4.4721 val_score(T=1)=0.4075
+  ep06 train_ce=0.0129 val_nll=5.3455 val_score(T=1)=0.4122
+  ep07 train_ce=0.0118 val_nll=5.4579 val_score(T=1)=0.4143
+  ep08 train_ce=0.0085 val_nll=5.9576 val_score(T=1)=0.4179
+  ep09 train_ce=0.0053 val_nll=6.9445 val_score(T=1)=0.4198
+  ep10 train_ce=0.0052 val_nll=7.0274 val_score(T=1)=0.4212
+  ep11 train_ce=0.0051 val_nll=7.1833 val_score(T=1)=0.4221
+  ep12 train_ce=0.0051 val_nll=7.3300 val_score(T=1)=0.4228
+  ep13 train_ce=0.0050 val_nll=7.4218 val_score(T=1)=0.4225
+  ep14 train_ce=0.0050 val_nll=7.4565 val_score(T=1)=0.4226
+  ep15 train_ce=0.0050 val_nll=7.4827 val_score(T=1)=0.4227
+  ep16 train_ce=0.0050 val_nll=7.5023 val_score(T=1)=0.4227
+  ep17 train_ce=0.0050 val_nll=7.5131 val_score(T=1)=0.4227
+  ep18 train_ce=0.0050 val_nll=7.5191 val_score(T=1)=0.4227
+  ep19 train_ce=0.0050 val_nll=7.5197 val_score(T=1)=0.4227
+=== fold 1
+  ep00 train_ce=2.8347 val_nll=2.0766 val_score(T=1)=0.1061
+  ep01 train_ce=1.3669 val_nll=1.4840 val_score(T=1)=0.3365
+  ep02 train_ce=0.1782 val_nll=2.1835 val_score(T=1)=0.3658
+  ep03 train_ce=0.0826 val_nll=2.9215 val_score(T=1)=0.4019
+  ep04 train_ce=0.0360 val_nll=3.3519 val_score(T=1)=0.4055
+  ep05 train_ce=0.0200 val_nll=4.3082 val_score(T=1)=0.4112
+  ep06 train_ce=0.0129 val_nll=5.8092 val_score(T=1)=0.4270
+  ep07 train_ce=0.0071 val_nll=6.7327 val_score(T=1)=0.4289
+  ep08 train_ce=0.0055 val_nll=6.4195 val_score(T=1)=0.4284
+  ep09 train_ce=0.0051 val_nll=6.7389 val_score(T=1)=0.4283
+  ep10 train_ce=0.0049 val_nll=6.8327 val_score(T=1)=0.4299
+  ep11 train_ce=0.0049 val_nll=6.9622 val_score(T=1)=0.4311
+  ep12 train_ce=0.0049 val_nll=7.0303 val_score(T=1)=0.4311
+  ep13 train_ce=0.0048 val_nll=7.0612 val_score(T=1)=0.4314
+  ep14 train_ce=0.0048 val_nll=7.0867 val_score(T=1)=0.4315
+  ep15 train_ce=0.0048 val_nll=7.1196 val_score(T=1)=0.4315
+  ep16 train_ce=0.0048 val_nll=7.1325 val_score(T=1)=0.4317
+  ep17 train_ce=0.0048 val_nll=7.1382 val_score(T=1)=0.4317
+  ep18 train_ce=0.0049 val_nll=7.1443 val_score(T=1)=0.4317
+  ep19 train_ce=0.0048 val_nll=7.1452 val_score(T=1)=0.4317
+=== fold 2
+  ep00 train_ce=2.8249 val_nll=2.0257 val_score(T=1)=0.1158
+  ep01 train_ce=1.3611 val_nll=1.4903 val_score(T=1)=0.3434
+  ep02 train_ce=0.1704 val_nll=2.4826 val_score(T=1)=0.3964
+  ep03 train_ce=0.0721 val_nll=4.0453 val_score(T=1)=0.4256
+  ep04 train_ce=0.0407 val_nll=4.1356 val_score(T=1)=0.4084
+  ep05 train_ce=0.0160 val_nll=4.4089 val_score(T=1)=0.4087
+  ep06 train_ce=0.0135 val_nll=3.8986 val_score(T=1)=0.3962
+  ep07 train_ce=0.0081 val_nll=5.2420 val_score(T=1)=0.4150
+  ep08 train_ce=0.0074 val_nll=5.0214 val_score(T=1)=0.4037
+  ep09 train_ce=0.0058 val_nll=6.0280 val_score(T=1)=0.4247
+  ep10 train_ce=0.0049 val_nll=6.6991 val_score(T=1)=0.4251
+  ep11 train_ce=0.0048 val_nll=6.9782 val_score(T=1)=0.4264
+  ep12 train_ce=0.0048 val_nll=7.0576 val_score(T=1)=0.4269
+  ep13 train_ce=0.0048 val_nll=7.0831 val_score(T=1)=0.4267
+  ep14 train_ce=0.0047 val_nll=7.1051 val_score(T=1)=0.4269
+  ep15 train_ce=0.0047 val_nll=7.1276 val_score(T=1)=0.4271
+  ep16 train_ce=0.0047 val_nll=7.1421 val_score(T=1)=0.4272
+  ep17 train_ce=0.0047 val_nll=7.1554 val_score(T=1)=0.4273
+  ep18 train_ce=0.0047 val_nll=7.1603 val_score(T=1)=0.4273
+  ep19 train_ce=0.0047 val_nll=7.1607 val_score(T=1)=0.4273
+=== fold 3
+  ep00 train_ce=2.8287 val_nll=2.0322 val_score(T=1)=0.1219
+  ep01 train_ce=1.3443 val_nll=1.5067 val_score(T=1)=0.3369
+  ep02 train_ce=0.1673 val_nll=2.3807 val_score(T=1)=0.3827
+  ep03 train_ce=0.0714 val_nll=3.6449 val_score(T=1)=0.4017
+  ep04 train_ce=0.0406 val_nll=4.3621 val_score(T=1)=0.4104
+  ep05 train_ce=0.0228 val_nll=4.9139 val_score(T=1)=0.4226
+  ep06 train_ce=0.0119 val_nll=5.8674 val_score(T=1)=0.4228
+  ep07 train_ce=0.0137 val_nll=4.6967 val_score(T=1)=0.4175
+  ep08 train_ce=0.0098 val_nll=6.2193 val_score(T=1)=0.4251
+  ep09 train_ce=0.0060 val_nll=7.0420 val_score(T=1)=0.4249
+  ep10 train_ce=0.0054 val_nll=7.1422 val_score(T=1)=0.4258
+  ep11 train_ce=0.0053 val_nll=7.2396 val_score(T=1)=0.4267
+  ep12 train_ce=0.0053 val_nll=7.3410 val_score(T=1)=0.4272
+  ep13 train_ce=0.0052 val_nll=7.4037 val_score(T=1)=0.4275
+  ep14 train_ce=0.0052 val_nll=7.4463 val_score(T=1)=0.4276
+  ep15 train_ce=0.0052 val_nll=7.4731 val_score(T=1)=0.4277
+  ep16 train_ce=0.0052 val_nll=7.4998 val_score(T=1)=0.4278
+  ep17 train_ce=0.0052 val_nll=7.5115 val_score(T=1)=0.4278
+  ep18 train_ce=0.0052 val_nll=7.5160 val_score(T=1)=0.4278
+  ep19 train_ce=0.0052 val_nll=7.5166 val_score(T=1)=0.4278
+{
+ "tag": "e1_full",
+ "cfg": {
+  "d": 64,
+  "hidden": 128,
+  "dropout": 0.1,
+  "bilinear": true,
+  "axial": true,
+  "struct": true,
+  "lr": 0.002,
+  "wd": 0.0001,
+  "l2B": 1e-05,
+  "epochs": 20,
+  "bs": 128,
+  "seed": 20260918,
+  "V": 378
+ },
+ "time_s": 290.2,
+ "train_fit_T1": [
+  1.0,
+  1.0,
+  1.0,
+  1.0
+ ],
+ "T=1.0": {
+  "folds": [
+   0.4227,
+   0.4317,
+   0.4273,
+   0.4278
+  ],
+  "mean": 0.4274,
+  "std": 0.0032,
+  "worst": 0.4227
+ },
+ "T=0.7": {
+  "folds": [
+   0.4284,
+   0.4387,
+   0.4344,
+   0.4334
+  ],
+  "mean": 0.4337,
+  "std": 0.0037,
+  "worst": 0.4284
+ },
+ "T=0.5": {
+  "folds": [
+   0.4321,
+   0.4434,
+   0.4392,
+   0.4372
+  ],
+  "mean": 0.4379,
+  "std": 0.0041,
+  "worst": 0.4321
+ },
+ "T=0.35": {
+  "folds": [
+   0.4347,
+   0.4466,
+   0.4428,
+   0.44
+  ],
+  "mean": 0.441,
+  "std": 0.0043,
+  "worst": 0.4347
+ },
+ "T=0.25": {
+  "folds": [
+   0.4366,
+   0.4487,
+   0.4452,
+   0.4419
+  ],
+  "mean": 0.4431,
+  "std": 0.0044,
+  "worst": 0.4366
+ },
+ "perm_acc": 0.4479,
+ "cell_acc": 0.6538,
+ "nll": 7.3233
+}

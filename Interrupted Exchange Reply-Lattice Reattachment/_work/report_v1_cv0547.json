@@ -1,0 +1,191 @@
+{
+  "validation": {
+    "scheme": "4-fold GroupKFold by exchange group (no group split across folds); exact published mean_clipped_structured_brier_v1 metric; all memory/kNN features for labelled rows computed out-of-fold by group (inner 4-fold GroupKFold) so no row ever retrieves from its own exchange",
+    "fold_scores": [
+      0.537736,
+      0.558789,
+      0.537947,
+      0.554856
+    ],
+    "mean": 0.547332,
+    "std": 0.009592,
+    "worst": 0.537736,
+    "brier_component_mean": 0.137521,
+    "structure_component_mean": 0.0,
+    "exact_permutation_accuracy": 0.547331,
+    "cell_assignment_accuracy": 0.724958,
+    "train_fit_scores": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "train_validation_gap": 0.4527,
+    "decoding_comparison": {
+      "map_permutation": 0.547332,
+      "softmax_T=1.0": 0.408138,
+      "softmax_T=0.5": 0.478333,
+      "softmax_T=0.25": 0.513981,
+      "softmax_T=0.1": 0.533612
+    },
+    "target_0p70_met": false
+  },
+  "model": {
+    "architecture": "Permutation CRF: pair score = full-rank learned bucket x bucket compatibility matrices (last context segment, previous segment, lattice-successor segment, event-specific last segment; 4 x 378 x 378, L2 1e-3) + 2-layer MLP (64 hidden) over 40 pair features [20 structural/overlap: has_prev/has_succ x outcome_kind, content lengths, word/value/filler overlaps per segment; 12 exact-key memory stats; 8 soft-kNN similarities to true and false pairs from other exchange groups]; exact 24-permutation softmax trained with permutation cross-entropy (full batch Adam, 300 iters); MAP-permutation decoding",
+    "target": ">0.70 robust grouped CV",
+    "pretrained": false,
+    "decoding_rationale": "For doubly-stochastic P the row score is clip(1 - ||P - Y||_F^2, 0, 1). Distinct permutation matrices are >= 2 apart, so at most one permutation can receive a positive score for any P; the expected-score-optimal output is the MAP permutation matrix (expected score = its posterior probability). Confirmed on OOF: T=1 0.408 -> T=0.1 0.534 -> MAP 0.547.",
+    "hyperparameters": {
+      "lambda_W": 0.001,
+      "lr_W": 0.02,
+      "lr_mlp": 0.005,
+      "iters": 300,
+      "mlp_hidden": 64,
+      "dropout": 0.1,
+      "inner_oof_folds": 4,
+      "seed": 20260918
+    }
+  },
+  "constraints": {
+    "external_data": false,
+    "network": false,
+    "package_install": false,
+    "synthetic_training": false,
+    "test_labels": false,
+    "test_fit_statistics": false,
+    "used_group_as_model_feature": false,
+    "deterministic": true,
+    "notes": "group used only for fold construction. Vocabulary is closed (manifest bucket sizes). Feature standardization, IDF and retrieval memory are fitted on training rows only; test rows are only queried."
+  },
+  "experiments": [
+    {
+      "name": "E0 starter (as provided)",
+      "result": "crashed: pair_in = D_MODEL*4+14+8 = 342 but concatenated pair vector is 422 wide (outcome embedding omitted)",
+      "decision": "fixed one line to obtain a baseline"
+    },
+    {
+      "name": "E0b starter, dimension bug fixed",
+      "cv_folds": [
+        0.397812,
+        0.401293,
+        0.391348,
+        0.387579
+      ],
+      "mean": 0.394508,
+      "std": 0.005361,
+      "worst": 0.387579,
+      "runtime_s": 442,
+      "decision": "baseline"
+    },
+    {
+      "name": "E1 neural set encoder (multi-head attention pooling, prev/last/successor segments, full bilinear, axial row/column attention, 24-perm CE)",
+      "cv_folds_T0.25": [
+        0.4366,
+        0.4487,
+        0.4452,
+        0.4419
+      ],
+      "mean": 0.4431,
+      "perm_acc": 0.4479,
+      "train_fit": 1.0,
+      "val_nll": 7.32,
+      "decision": "rejected: memorizes training rows by epoch 3 (train CE 0.005) while val NLL explodes; superseded by E2/E3"
+    },
+    {
+      "name": "E2 bilinear permutation CRF + MLP over structural and exact-key memory features",
+      "cv_folds_T0.15": [
+        0.5158,
+        0.5317,
+        0.5222,
+        0.517
+      ],
+      "mean": 0.5217,
+      "perm_acc": 0.5361,
+      "decision": "kept as base: +0.08 over E1 on every fold"
+    },
+    {
+      "name": "E3 E2 + soft kNN pair-retrieval features (TF-IDF bags, similarity to true/false pairs in other groups)",
+      "cv_folds_T0.1": [
+        0.5277,
+        0.5418,
+        0.5261,
+        0.5298
+      ],
+      "mean": 0.5314,
+      "perm_acc": 0.5425,
+      "decision": "kept: small but consistent gain on all folds"
+    },
+    {
+      "name": "E3 with stronger L2 on compatibility matrices (1e-4 -> 1e-3)",
+      "cv_folds_MAP": [
+        0.537736,
+        0.558789,
+        0.537947,
+        0.554856
+      ],
+      "mean": 0.547332,
+      "perm_acc": 0.547331,
+      "decision": "FINAL: better on 3/4 folds, lower NLL (1.44 vs 1.63)"
+    },
+    {
+      "name": "Ensemble E3 + E1 (z-scored perm scores, w=0.2..0.4)",
+      "mean": 0.526,
+      "decision": "rejected: lower on every fold (E1 overconfident)"
+    },
+    {
+      "name": "Probe: token order (ordered vs shuffled content bigrams, naive Bayes)",
+      "perm_acc": [
+        0.2524,
+        0.228
+      ],
+      "decision": "order carries little extra signal; order-aware encoder not pursued"
+    }
+  ],
+  "findings": [
+    "Filler n_ tokens are deterministic per message (full-token keys recur across groups as often as content keys) and carry weak signal.",
+    "~43% of validation last segments and ~52% of true outcomes recur (content-only) in other exchange groups; exact co-occurrence of (context, outcome) in other groups is ~72% precise.",
+    "Single-segment contexts are followed by an event outcome only 2.9% of the time vs 35.8% for two-segment contexts.",
+    "Bag-level bucket compatibility saturates around 50-55% exact permutation accuracy; because the metric is ~= exact permutation accuracy under optimal decoding, 0.70 requires ~70% exact accuracy."
+  ],
+  "final_chosen_approach": "E3 permutation CRF (lambda 1e-3) trained on all training rows, memory features OOF by group for training rows and from the full training memory for test rows, MAP-permutation output.",
+  "fallbacks": {
+    "original_starter": "_work/solution_starter_original.py",
+    "bug_fixed_starter": "_work/solution_starter_bugfixed.py",
+    "experiment_code": "_work/exp.py, _work/exp2.py, _work/exp3.py"
+  },
+  "final_submission": {
+    "rows": 101,
+    "columns": [
+      "id",
+      "match_probability_00",
+      "match_probability_01",
+      "match_probability_02",
+      "match_probability_03",
+      "match_probability_04",
+      "match_probability_05",
+      "match_probability_06",
+      "match_probability_07",
+      "match_probability_08",
+      "match_probability_09",
+      "match_probability_10",
+      "match_probability_11",
+      "match_probability_12",
+      "match_probability_13",
+      "match_probability_14",
+      "match_probability_15"
+    ],
+    "generated_by": "solution.py",
+    "submission_validation_errors": 0,
+    "independent_validator_errors": [],
+    "runtime_runs_s": [
+      69.6,
+      77.5
+    ],
+    "cv_runtime_s": 177.7,
+    "device": "cuda (CUBLAS_WORKSPACE_CONFIG=:4096:8, torch.use_deterministic_algorithms(True))",
+    "sha256_run1": "9f741310d2b204634cb6400fda9d581e3976b16b10c86539b1a67958e7c47c48",
+    "sha256_run2": "9f741310d2b204634cb6400fda9d581e3976b16b10c86539b1a67958e7c47c48",
+    "identical": true
+  },
+  "total_wall_time": "~1h45m"
+}

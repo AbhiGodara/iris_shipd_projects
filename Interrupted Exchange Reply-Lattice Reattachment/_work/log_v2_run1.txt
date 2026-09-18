@@ -1,0 +1,7 @@
+{
+  "rows": 101,
+  "validation_errors": 0,
+  "device": "cuda",
+  "runtime_s": 194.4,
+  "sha256": "1f9b054451bd2589efc38682d3470b4067a530d37e53f12998249962ed231f98"
+}
