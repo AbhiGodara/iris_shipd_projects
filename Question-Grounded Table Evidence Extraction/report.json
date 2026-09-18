@@ -1,0 +1,36 @@
+{
+    "validation": {
+        "scheme": "4-fold GroupKFold by connected title+section / identical-table proxy; exact per-question cell F1",
+        "fold_scores": [],
+        "mean": null,
+        "std": null,
+        "worst": null,
+        "thresholds": []
+    },
+    "model": {
+        "architecture": "LightGBM cell scorer with word/char TF-IDF similarities, question-row/column/header similarities, lexical overlap and structural table features",
+        "structured_decoder": "thresholded cell set with best-cell fallback",
+        "target": ">0.75 robust grouped CV",
+        "pretrained": false
+    },
+    "constraints": {
+        "external_data": false,
+        "network": false,
+        "test_labels": false,
+        "hard_coded_test_outputs": false,
+        "group_used_only_for_validation": true,
+        "deterministic": true
+    },
+    "experiments": [],
+    "final_submission": {
+        "rows": null,
+        "columns": [],
+        "generated_by": "solution.py",
+        "submission_validation_errors": null,
+        "independent_validator_errors": null,
+        "runtime_runs_s": [],
+        "sha256_run1": null,
+        "sha256_run2": null,
+        "identical": null
+    }
+}
